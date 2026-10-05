@@ -1,0 +1,4 @@
+Model,Test Cases,Top-1,Top-3,Top-5
+BAAI/bge-small-en-v1.5,113,83.19,90.27,93.81
+BAAI/bge-base-en-v1.5,113,86.73,92.04,93.81
+all-MiniLM-L6-v2,113,78.76,90.27,91.15
