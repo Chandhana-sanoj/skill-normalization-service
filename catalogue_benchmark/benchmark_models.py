@@ -222,6 +222,7 @@ TEST_CASES = [
     ("GitLab", "GitLab"),
 ]
 
+
 # -----------------------------
 # Load actual catalogue
 # -----------------------------
