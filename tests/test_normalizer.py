@@ -2,6 +2,7 @@ import pytest
 
 from app.services.catalogue_loader import load_catalogue
 from app.services.normalizer import SkillNormalizer
+from app.services.vector_search import VectorSearcher
 
 
 CATALOGUE_FILE = "skill_catalogue.xlsx"
@@ -10,10 +11,12 @@ CATALOGUE_FILE = "skill_catalogue.xlsx"
 @pytest.fixture
 def normalizer():
     alias_map, canonical_map = load_catalogue(CATALOGUE_FILE)
+    vector_searcher = VectorSearcher()
 
     return SkillNormalizer(
         alias_map=alias_map,
         canonical_map=canonical_map,
+        vector_searcher=vector_searcher,
     )
 
 
@@ -68,3 +71,17 @@ def test_unknown_skill_is_unresolved(normalizer):
 def test_empty_input_is_rejected(normalizer):
     with pytest.raises(ValueError):
         normalizer.normalize("")
+
+
+def test_semantic_match(normalizer):
+    result = normalizer.normalize("management of waste")
+
+    assert result["skill"] == "Waste Management"
+    assert result["status"] == "matched"
+
+
+def test_semantic_match_cloud_infrastructure(normalizer):
+    result = normalizer.normalize("managing cloud infrastructure")
+
+    assert result["skill"] == "Cloud Infrastructure Management"
+    assert result["status"] == "matched"
