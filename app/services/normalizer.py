@@ -4,12 +4,16 @@ from app.services.preprocessing import (
 )
 from app.services.alias_matcher import AliasMatcher
 from app.services.embedding_matcher import EmbeddingMatcher
+from app.repositories.unresolved_skill_repository import (
+    UnresolvedSkillRepository,
+)
 
 
 class SkillNormalizer:
     """
     Orchestrates preprocessing, exact alias matching,
-    version extraction, and embedding fallback.
+    version extraction, embedding fallback,
+    and unresolved skill storage.
     """
 
     def __init__(
@@ -17,6 +21,7 @@ class SkillNormalizer:
         alias_map,
         canonical_map,
         vector_searcher,
+        organization_id: int,
     ):
         self.matcher = AliasMatcher(
             alias_map=alias_map,
@@ -24,8 +29,12 @@ class SkillNormalizer:
         )
 
         self.embedding_matcher = EmbeddingMatcher(
-            vector_searcher=vector_searcher,
-        )
+        vector_searcher=vector_searcher,
+        organization_id=organization_id,
+        )   
+
+        self.organization_id = organization_id
+        self.unresolved_repository = UnresolvedSkillRepository()
 
     def normalize(self, text: str) -> dict:
 
@@ -78,6 +87,12 @@ class SkillNormalizer:
             }
 
         # Step 6: No exact or semantic match
+        # Store the unresolved input for this organization.
+        self.unresolved_repository.save(
+            organization_id=self.organization_id,
+            input_text=cleaned_input,
+        )
+
         return {
             "input": cleaned_input,
             "skill": None,

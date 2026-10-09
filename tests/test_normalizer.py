@@ -17,6 +17,7 @@ def normalizer():
         alias_map=alias_map,
         canonical_map=canonical_map,
         vector_searcher=vector_searcher,
+        organization_id=1,
     )
 
 

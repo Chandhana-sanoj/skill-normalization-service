@@ -1,7 +1,9 @@
-import psycopg
-from sentence_transformers import SentenceTransformer
 import os
+
+import psycopg
 from dotenv import load_dotenv
+from sentence_transformers import SentenceTransformer
+
 
 load_dotenv()
 
@@ -21,8 +23,12 @@ class VectorSearcher:
         print(f"Loading model: {MODEL_NAME}")
         self.model = SentenceTransformer(MODEL_NAME)
 
-    def search(self, text: str, top_k: int = 5):
-        # Generate embedding for the input
+    def search(
+        self,
+        text: str,
+        organization_id: int,
+        top_k: int = 3,
+    ):
         embedding = self.model.encode(
             text,
             normalize_embeddings=True,
@@ -30,69 +36,44 @@ class VectorSearcher:
 
         vector = embedding.tolist()
 
-        # Search PostgreSQL using cosine distance
+        query = """
+            SELECT
+                skill_id,
+                skill_name,
+                similarity
+            FROM (
+                SELECT
+                    id AS skill_id,
+                    name AS skill_name,
+                    1 - (embedding <=> %s::vector) AS similarity
+                FROM organization_skill
+                WHERE organization_id = %s
+                  AND embedding IS NOT NULL
+
+                UNION ALL
+
+                SELECT
+                    id AS skill_id,
+                    name AS skill_name,
+                    1 - (embedding <=> %s::vector) AS similarity
+                FROM canonical_skill
+                WHERE embedding IS NOT NULL
+            ) AS combined_skills
+            ORDER BY similarity DESC
+            LIMIT %s;
+        """
+
         with psycopg.connect(**DB_CONFIG) as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """
-                    SELECT
-                        id,
-                        name,
-                        1 - (embedding <=> %s::vector) AS similarity
-                    FROM canonical_skill
-                    WHERE embedding IS NOT NULL
-                    ORDER BY embedding <=> %s::vector
-                    LIMIT %s;
-                    """,
-                    (vector, vector, top_k),
+                    query,
+                    (
+                        vector,
+                        organization_id,
+                        vector,
+                        top_k,
+                    ),
                 )
 
                 return cur.fetchall()
-
-
-if __name__ == "__main__":
-    searcher = VectorSearcher()
-
-    test_inputs = [
-        # Exact / short variation cases
-        "JavaScript",
-        "Java",
-        "JS",
-        "ECMAScript",
-        "React",
-        "ReactNative",
-        "C#",
-        "C sharp",
-        "K8s",
-        "AWS",
-        "GCP",
-        "SQL",
-        "Postgres",
-
-        # Semantic meaning-based cases
-        "management of waste",
-        "managing customer relationships",
-        "detecting fraudulent transactions",
-        "predicting customer churn",
-        "managing cloud infrastructure",
-        "protecting applications from cyber attacks",
-        "analyzing customer satisfaction",
-        "analyzing employee performance",
-    ]
-
-    for test_input in test_inputs:
-        results = searcher.search(test_input, top_k=3)
-
-        print()
-        print(f"Input: {test_input}")
-        print("-" * 60)
-
-        for rank, (skill_id, name, similarity) in enumerate(
-            results,
-            start=1,
-        ):
-            print(
-                f"{rank}. {name} "
-                f"(ID: {skill_id}, similarity: {similarity:.4f})"
-            )
     

@@ -1,17 +1,18 @@
 class EmbeddingMatcher:
-    
-
     def __init__(
         self,
         vector_searcher,
+        organization_id: int,
         threshold: float = 0.85,
     ):
         self.vector_searcher = vector_searcher
+        self.organization_id = organization_id
         self.threshold = threshold
 
     def match(self, text: str) -> dict | None:
         results = self.vector_searcher.search(
             text,
+            organization_id=self.organization_id,
             top_k=3,
         )
 
