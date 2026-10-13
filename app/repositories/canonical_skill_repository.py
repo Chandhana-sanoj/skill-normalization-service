@@ -6,15 +6,9 @@ import psycopg
 from dotenv import load_dotenv
 
 from app.services.preprocessing import normalize_lookup_key
-
+from app.core.config import DB_CONFIG
 load_dotenv()
 
-DB_CONFIG = {
-    "host": "127.0.0.1",
-    "dbname": "skill_normalization",
-    "user": "postgres",
-    "password": os.getenv("DB_PASSWORD"),
-}
 
 
 class CanonicalSkillRepository:

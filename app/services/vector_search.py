@@ -3,20 +3,12 @@ import os
 import psycopg
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
-
+from app.core.config import DB_CONFIG
 
 load_dotenv()
 
 
 MODEL_NAME = "BAAI/bge-base-en-v1.5"
-
-DB_CONFIG = {
-    "host": "127.0.0.1",
-    "dbname": "skill_normalization",
-    "user": "postgres",
-    "password": os.getenv("DB_PASSWORD"),
-}
-
 
 class VectorSearcher:
     def __init__(self):

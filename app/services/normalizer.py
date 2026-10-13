@@ -1,4 +1,3 @@
-
 from app.services.preprocessing import (
     normalize_input,
     extract_version,
@@ -123,4 +122,5 @@ class SkillNormalizer:
             "description": None,
             "status": "unresolved",
         }
+    
     
