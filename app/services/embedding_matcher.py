@@ -1,9 +1,10 @@
+
 class EmbeddingMatcher:
     def __init__(
         self,
         vector_searcher,
         organization_id: int,
-        threshold: float = 0.85,
+        threshold: float = 0.75,
     ):
         self.vector_searcher = vector_searcher
         self.organization_id = organization_id
@@ -29,3 +30,4 @@ class EmbeddingMatcher:
             "name": best_name,
             "similarity": best_similarity,
         }
+

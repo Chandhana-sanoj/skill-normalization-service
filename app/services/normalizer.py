@@ -1,3 +1,4 @@
+
 from app.services.preprocessing import (
     normalize_input,
     extract_version,
@@ -22,6 +23,7 @@ class SkillNormalizer:
         canonical_map,
         vector_searcher,
         organization_id: int,
+        description_map,
     ):
         self.matcher = AliasMatcher(
             alias_map=alias_map,
@@ -29,15 +31,29 @@ class SkillNormalizer:
         )
 
         self.embedding_matcher = EmbeddingMatcher(
-        vector_searcher=vector_searcher,
-        organization_id=organization_id,
-        )   
+            vector_searcher=vector_searcher,
+            organization_id=organization_id,
+        )
 
         self.organization_id = organization_id
+        self.canonical_map = canonical_map
+        self.description_map = description_map
         self.unresolved_repository = UnresolvedSkillRepository()
 
-    def normalize(self, text: str) -> dict:
+    def get_description(self, canonical_id):
+        """Return the description for a canonical skill ID."""
+        description = self.description_map.get(canonical_id)
+        return description or None
 
+    def get_description_by_name(self, canonical_name):
+        """Find a description using the canonical skill name."""
+        for canonical_id, name in self.canonical_map.items():
+            if name == canonical_name:
+                return self.get_description(canonical_id)
+
+        return None
+
+    def normalize(self, text: str) -> dict:
         # Step 1: Basic input preprocessing
         cleaned_input = normalize_input(text)
 
@@ -56,6 +72,7 @@ class SkillNormalizer:
                 "input": cleaned_input,
                 "skill": canonical_name,
                 "version": None,
+                "description": self.get_description(canonical_id),
                 "status": "matched",
             }
 
@@ -72,6 +89,7 @@ class SkillNormalizer:
                 "input": cleaned_input,
                 "skill": canonical_name,
                 "version": version,
+                "description": self.get_description(canonical_id),
                 "status": "matched",
             }
 
@@ -79,10 +97,15 @@ class SkillNormalizer:
         embedding_result = self.embedding_matcher.match(skill_name)
 
         if embedding_result is not None:
+            canonical_name = embedding_result["name"]
+
             return {
                 "input": cleaned_input,
-                "skill": embedding_result["name"],
+                "skill": canonical_name,
                 "version": version,
+                "description": self.get_description_by_name(
+                    canonical_name
+                ),
                 "status": "matched",
             }
 
@@ -97,5 +120,7 @@ class SkillNormalizer:
             "input": cleaned_input,
             "skill": None,
             "version": version,
+            "description": None,
             "status": "unresolved",
         }
+    
