@@ -62,4 +62,3 @@ class AliasMatcher:
         """
         lookup_key = normalize_lookup_key(text)
         return lookup_key in self.alias_map
-    

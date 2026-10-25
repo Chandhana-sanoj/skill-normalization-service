@@ -1,3 +1,31 @@
-
+# Python cache
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Generated test output
+~$*.xlsx
+bulk_test_results.xlsx
+pipeline_results.xlsx
+skillset_bulk_test_500.xlsx
+pylint_report.txt
+
+# Frontend dependencies and build output
+frontend/node_modules/
+frontend/dist/
+
+# Local operating system files
+.DS_Store
+Thumbs.db

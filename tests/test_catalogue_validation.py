@@ -1,108 +1,67 @@
-import pandas as pd
+from unittest.mock import MagicMock
 
-from app.services.catalogue_loader import load_catalogue
+import psycopg
+import pytest
+
+from app.repositories.canonical_skill_repository import CanonicalSkillRepository
 
 
-CATALOGUE_FILE = "skill_catalogue.xlsx"
+def make_connection(canonical_rows, alias_rows):
+    cursor = MagicMock()
+    cursor.fetchall.side_effect = [canonical_rows, alias_rows]
+    connection = MagicMock()
+    connection.cursor.return_value.__enter__.return_value = cursor
+    connection.__enter__.return_value = connection
+    return connection, cursor
 
 
-def test_catalogue_structure():
-    canonical_df = pd.read_excel(
-        CATALOGUE_FILE,
-        sheet_name="canonical_skill"
-    )
-
-    alias_df = pd.read_excel(
-        CATALOGUE_FILE,
-        sheet_name="skill_alias"
-    )
-
-    assert len(canonical_df) == 5071
-    assert len(alias_df) == 5071
-
-    assert list(canonical_df.columns) == [
-        "ID",
-        "Canonical Name",
-        "Short Description"
+def test_repository_loads_all_four_catalogue_maps(monkeypatch):
+    canonical_rows = [
+        (1, "Python", "Programming language", "Programming"),
+        (2, "React", None, None),
     ]
-
-    assert list(alias_df.columns) == [
-        "ID",
-        "Aliases"
+    alias_rows = [
+        ("Python", 1),
+        ("Py", 1),
+        ("ReactJS", 2),
     ]
+    connection, cursor = make_connection(canonical_rows, alias_rows)
+    monkeypatch.setattr("app.repositories.canonical_skill_repository.psycopg.connect",
+                        lambda **kwargs: connection)
 
-
-def test_all_alias_ids_exist_in_canonical_table():
-    canonical_df = pd.read_excel(
-        CATALOGUE_FILE,
-        sheet_name="canonical_skill"
+    alias_map, canonical_map, description_map, category_map = (
+        CanonicalSkillRepository().load_catalogue()
     )
 
-    alias_df = pd.read_excel(
-        CATALOGUE_FILE,
-        sheet_name="skill_alias"
+    assert canonical_map == {1: "Python", 2: "React"}
+    assert description_map == {1: "Programming language", 2: ""}
+    assert category_map == {1: "Programming", 2: ""}
+    assert alias_map == {"python": {1}, "py": {1}, "reactjs": {2}}
+    assert cursor.execute.call_count == 2
+
+
+def test_repository_wraps_database_errors(monkeypatch):
+    def fail_connect(**kwargs):
+        raise psycopg.OperationalError("database unavailable")
+
+    monkeypatch.setattr(
+        "app.repositories.canonical_skill_repository.psycopg.connect",
+        fail_connect,
     )
 
-    canonical_ids = set(canonical_df["ID"])
-    alias_ids = set(alias_df["ID"])
-
-    assert alias_ids == canonical_ids
+    with pytest.raises(RuntimeError, match="PostgreSQL"):
+        CanonicalSkillRepository().load_catalogue()
 
 
-def test_all_canonical_names_are_in_aliases():
-    canonical_df = pd.read_excel(
-        CATALOGUE_FILE,
-        sheet_name="canonical_skill"
+def test_alias_conflicts_are_retained_for_explicit_handling(monkeypatch):
+    connection, _ = make_connection(
+        [(1, "Python", "", "Programming"), (2, "Python variant", "", "Programming")],
+        [("shared", 1), ("shared", 2)],
+    )
+    monkeypatch.setattr(
+        "app.repositories.canonical_skill_repository.psycopg.connect",
+        lambda **kwargs: connection,
     )
 
-    alias_df = pd.read_excel(
-        CATALOGUE_FILE,
-        sheet_name="skill_alias"
-    )
-
-    aliases_by_id = dict(
-        zip(
-            alias_df["ID"],
-            alias_df["Aliases"]
-        )
-    )
-
-    missing = []
-
-    for _, row in canonical_df.iterrows():
-        canonical_id = row["ID"]
-
-        canonical_name = str(
-            row["Canonical Name"]
-        ).strip().lower()
-
-        aliases = str(
-            aliases_by_id[canonical_id]
-        ).lower()
-
-        alias_list = [
-            alias.strip()
-            for alias in aliases.split("|")
-        ]
-
-        if canonical_name not in alias_list:
-            missing.append(
-                (
-                    canonical_id,
-                    row["Canonical Name"]
-                )
-            )
-
-    assert missing == []
-
-
-def test_no_alias_maps_to_multiple_canonical_ids():
-    alias_map, _ = load_catalogue(CATALOGUE_FILE)
-
-    conflicts = {
-        alias: ids
-        for alias, ids in alias_map.items()
-        if len(ids) > 1
-    }
-
-    assert conflicts == {}
+    alias_map, _, _, _ = CanonicalSkillRepository().load_catalogue()
+    assert alias_map["shared"] == {1, 2}

@@ -1,11 +1,20 @@
-import pandas as pd
+
 import re
+import sys
 from pathlib import Path
 
+import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-CATALOGUE_PATH = PROJECT_ROOT / "skill_catalogue.xlsx"
+# Allow imports from the project root when this script is run directly.
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from app.repositories.canonical_skill_repository import (
+    CanonicalSkillRepository,
+)
+
 OUTPUT_PATH = PROJECT_ROOT / "catalogue_benchmark" / "test_cases.csv"
 
 
@@ -23,20 +32,21 @@ COMMON_ALIASES = {
 
 
 def clean_text(text):
+    """Strip leading/trailing whitespace and normalize internal spaces."""
     text = str(text).strip()
     text = re.sub(r"\s+", " ", text)
     return text
 
 
 def create_test_input(skill_name):
+    """Generate a test input and identify the transformation applied."""
     skill = clean_text(skill_name)
 
     # Use a known common alias when available.
     if skill in COMMON_ALIASES:
         return COMMON_ALIASES[skill], "common_alias"
 
-    # Lowercase longer skill names.
-    # This tests normalization/embedding robustness.
+    # Lowercase longer skill names to test normalization robustness.
     if len(skill) > 3:
         return skill.lower(), "lowercase"
 
@@ -44,42 +54,56 @@ def create_test_input(skill_name):
     return skill, "canonical"
 
 
-def main():
+def load_catalogue_from_postgres():
+    """Load canonical skills and descriptions from PostgreSQL."""
+    print("Loading actual skill catalogue from PostgreSQL...")
 
-    if not CATALOGUE_PATH.exists():
-        raise FileNotFoundError(
-            f"Could not find catalogue file: {CATALOGUE_PATH}"
-        )
+    _, canonical_map, description_map, _ = (
+        CanonicalSkillRepository().load_catalogue()
+    )
 
-    print("Loading actual skill catalogue...")
-
-    df = pd.read_excel(CATALOGUE_PATH)
-
-    print(f"Loaded {len(df)} skills.")
-    print(f"Columns: {list(df.columns)}")
-
-    required_columns = [
-        "ID",
-        "Canonical Name",
-        "Short Description"
+    rows = [
+        {
+            "ID": skill_id,
+            "Canonical Name": name,
+            "Short Description": description_map.get(skill_id, ""),
+        }
+        for skill_id, name in canonical_map.items()
+        if isinstance(name, str) and name.strip()
     ]
 
-    for column in required_columns:
-        if column not in df.columns:
-            raise ValueError(
-                f"Missing required column: {column}"
-            )
+    if not rows:
+        raise RuntimeError(
+            "No canonical skills were loaded from PostgreSQL."
+        )
 
-    # Keep actual catalogue rows only.
-    df = df.dropna(subset=["Canonical Name"]).copy()
+    df = pd.DataFrame(
+        rows,
+        columns=[
+            "ID",
+            "Canonical Name",
+            "Short Description",
+        ],
+    )
 
     df["Canonical Name"] = df["Canonical Name"].apply(clean_text)
+    df["Short Description"] = df["Short Description"].fillna("")
+
+    # Guard against duplicate canonical names in the generated dataset.
+    df = df.drop_duplicates(subset=["Canonical Name"]).copy()
+
+    print(f"Loaded {len(df)} canonical skills from PostgreSQL.")
+    return df
+
+
+def main():
+    df = load_catalogue_from_postgres()
 
     # Generate benchmark inputs.
     generated = df["Canonical Name"].apply(create_test_input)
 
-    df["Test Input"] = generated.apply(lambda x: x[0])
-    df["Test Type"] = generated.apply(lambda x: x[1])
+    df["Test Input"] = generated.apply(lambda item: item[0])
+    df["Test Type"] = generated.apply(lambda item: item[1])
 
     test_df = df[
         [
@@ -87,16 +111,16 @@ def main():
             "Canonical Name",
             "Short Description",
             "Test Input",
-            "Test Type"
+            "Test Type",
         ]
-    ]
+    ].copy()
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     test_df.to_csv(
         OUTPUT_PATH,
         index=False,
-        encoding="utf-8"
+        encoding="utf-8",
     )
 
     print("\nTest dataset created successfully.")

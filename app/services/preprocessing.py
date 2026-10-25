@@ -1,50 +1,35 @@
+"""Basic input cleaning and lookup-key normalization."""
+
 import re
 
 
 def normalize_input(text: str) -> str:
-    """
-    Clean the raw skill input without changing its meaning.
-    """
-
+    """Clean input whitespace without changing its meaning."""
     if not isinstance(text, str):
         raise ValueError("Skill input must be a string")
 
-    text = text.strip()
-    text = " ".join(text.split())
-
-    return text
+    return " ".join(text.strip().split())
 
 
 def normalize_lookup_key(text: str) -> str:
-    """
-    Create a normalized key for exact catalogue lookup.
-    """
-
+    """Create a normalized key for exact catalogue lookup."""
     return normalize_input(text).lower()
 
 
+_VERSION_RE = re.compile(
+    r"^(?P<skill>.+?)\s+v?(?P<version>\d+(?:\.\d+)*)$",
+    re.IGNORECASE,
+)
+
+
 def extract_version(text: str) -> tuple[str, str | None]:
+    """Split 'Skill 3.10' into ('Skill', '3.10'), or return (text, None).
+
+    Only strips a trailing bare version number (optionally prefixed with 'v').
+    Version-like tokens that are part of a skill name (e.g. HTML5, .NET 8) are
+    handled correctly because the regex requires a space before the version.
     """
-    Extract a trailing version from a skill-like input.
-
-    Examples:
-        Python 3.10     -> ("Python", "3.10")
-        Java 17         -> ("Java", "17")
-        React 18        -> ("React", "18")
-        Python 3.10.2   -> ("Python", "3.10.2")
-        Python          -> ("Python", None)
-    """
-
-    text = normalize_input(text)
-
-    version_pattern = r"^(.*?)[\s]+v?(\d+(?:\.\d+){0,2})$"
-
-    match = re.match(version_pattern, text, re.IGNORECASE)
-
-    if not match:
-        return text, None
-
-    skill_name = match.group(1).strip()
-    version = match.group(2)
-
-    return skill_name, version
+    match = _VERSION_RE.match(text.strip())
+    if match:
+        return match.group("skill").strip(), match.group("version")
+    return text.strip(), None

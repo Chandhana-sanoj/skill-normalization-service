@@ -30,4 +30,3 @@ class EmbeddingMatcher:
             "name": best_name,
             "similarity": best_similarity,
         }
-

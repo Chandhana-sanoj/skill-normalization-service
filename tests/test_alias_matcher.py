@@ -1,33 +1,38 @@
+import pytest
+
 from app.services.alias_matcher import AliasMatcher
-from app.services.catalogue_loader import load_alias_map
 
 
-def test_real_alias_catalogue():
-    alias_map = load_alias_map("skill_catalogue.xlsx")
+@pytest.fixture
+def matcher():
+    alias_map = {
+        "python": {1},
+        "py": {1},
+        "reactjs": {2},
+        "shared alias": {1, 2},
+    }
+    canonical_map = {1: "Python", 2: "React"}
+    return AliasMatcher(alias_map, canonical_map)
 
-    matcher = AliasMatcher(alias_map)
-
-    # Check that known aliases are present
-    assert matcher.match("python") is not None
-    assert matcher.match("py") is not None
-    assert matcher.match("reactjs") is not None
-    assert matcher.match("postgres") is not None
-    assert matcher.match("k8s") is not None
 
 
-def test_unknown_skill():
-    alias_map = load_alias_map("skill_catalogue.xlsx")
+def test_canonical_and_alias_match(matcher):
+    assert matcher.match("python") == 1
+    assert matcher.match("Py") == 1
+    assert matcher.match_name(" PY ") == "Python"
 
-    matcher = AliasMatcher(alias_map)
 
-    # Unknown skills should not match anything
-    assert matcher.match("this_is_not_a_real_skill") is None
-    
-def test_input_normalization():
-    alias_map = load_alias_map("skill_catalogue.xlsx")
+def test_unknown_skill_does_not_match(matcher):
+    assert matcher.match("not a real skill") is None
 
-    matcher = AliasMatcher(alias_map)
 
+def test_input_normalization(matcher):
     assert matcher.match(" Python ") == matcher.match("python")
     assert matcher.match("PYTHON") == matcher.match("python")
-    assert matcher.match("  ReactJS  ") == matcher.match("reactjs")
+    assert matcher.match(" ReactJS ") == 2
+
+
+def test_ambiguous_alias_does_not_match(matcher):
+    assert matcher.match("shared alias") is None
+    assert matcher.is_ambiguous("shared alias")
+    assert matcher.is_known("shared alias")

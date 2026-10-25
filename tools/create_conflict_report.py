@@ -1,74 +1,43 @@
-import pandas as pd
-from pathlib import Path
+"""Benchmark exact alias matching using the PostgreSQL catalogue."""
+
+import statistics
+import time
+
+from app.repositories.canonical_skill_repository import CanonicalSkillRepository
+from app.services.alias_matcher import AliasMatcher
 
 
-CATALOGUE_FILE = Path("skill_catalogue.xlsx")
-OUTPUT_FILE = Path("alias_conflicts.xlsx")
+def main():
+    alias_map, canonical_map, _, _ = CanonicalSkillRepository().load_catalogue()
+    matcher = AliasMatcher(alias_map=alias_map, canonical_map=canonical_map)
+
+    test_inputs = [
+        "Python",
+        "Machine Learning",
+        "SQL",
+        "Python 3.12",
+        "a skill that does not exist",
+    ]
+
+    for skill in test_inputs:
+        matcher.match(skill)
+
+    timings = []
+    for _ in range(1000):
+        for skill in test_inputs:
+            start = time.perf_counter()
+            matcher.match(skill)
+            timings.append((time.perf_counter() - start) * 1000)
+
+    print(f"Total measurements: {len(timings)}")
+    print(f"Average latency: {statistics.mean(timings):.6f} ms")
+    print(f"Median latency: {statistics.median(timings):.6f} ms")
+    print(f"Minimum latency: {min(timings):.6f} ms")
+    print(f"Maximum latency: {max(timings):.6f} ms")
+    sorted_timings = sorted(timings)
+    p95_index = int(0.95 * (len(sorted_timings) - 1))
+    print(f"P95 latency: {sorted_timings[p95_index]:.6f} ms")
 
 
-canonical_df = pd.read_excel(
-    CATALOGUE_FILE,
-    sheet_name="canonical_skill"
-)
-
-alias_df = pd.read_excel(
-    CATALOGUE_FILE,
-    sheet_name="skill_alias"
-)
-
-
-canonical_names = dict(
-    zip(
-        canonical_df["ID"],
-        canonical_df["Canonical Name"]
-    )
-)
-
-
-rows = []
-
-for _, row in alias_df.iterrows():
-    canonical_id = int(row["ID"])
-    aliases = str(row["Aliases"])
-
-    for alias in aliases.split("|"):
-        alias = alias.strip()
-
-        if not alias:
-            continue
-
-        rows.append({
-            "Alias": alias.lower(),
-            "Canonical ID": canonical_id,
-            "Canonical Name": canonical_names[canonical_id],
-        })
-
-
-df = pd.DataFrame(rows)
-
-conflict_counts = (
-    df.groupby("Alias")["Canonical ID"]
-    .nunique()
-)
-
-conflicting_aliases = conflict_counts[
-    conflict_counts > 1
-].index
-
-
-conflicts = df[
-    df["Alias"].isin(conflicting_aliases)
-].sort_values(
-    ["Alias", "Canonical ID"]
-)
-
-
-conflicts.to_excel(
-    OUTPUT_FILE,
-    index=False
-)
-
-
-print(f"Conflicting aliases: {len(conflicting_aliases)}")
-print(f"Conflict rows: {len(conflicts)}")
-print(f"Saved to: {OUTPUT_FILE}")
+if __name__ == "__main__":
+    main()
