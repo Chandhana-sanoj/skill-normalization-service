@@ -29,3 +29,7 @@ frontend/dist/
 # Local operating system files
 .DS_Store
 Thumbs.db
+
+# Database backups
+backups/
+

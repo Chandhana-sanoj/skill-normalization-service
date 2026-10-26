@@ -6,12 +6,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DB_CONFIG = {
-    "host": "127.0.0.1",
-    "port": 5432,
-    "dbname": "skill_normalization",
-    "user": "postgres",
+    "host": os.getenv("DB_HOST", "127.0.0.1"),
+    "port": int(os.getenv("DB_PORT", "5432")),
+    "dbname": os.getenv("DB_NAME", "skill_normalization"),
+    "user": os.getenv("DB_USER", "postgres"),
     "password": os.getenv("DB_PASSWORD"),
 }
+
+# Require SSL for the hosted database.
+if os.getenv("DB_HOST"):
+    DB_CONFIG["sslmode"] = "require"
 
 CORS_ORIGINS = [
     origin.strip()
