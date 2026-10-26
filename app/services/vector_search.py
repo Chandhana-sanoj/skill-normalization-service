@@ -1,4 +1,6 @@
+
 """Vector similarity search over canonical and organization skills (pgvector)."""
+
 import psycopg
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
@@ -7,11 +9,8 @@ from app.core.config import DB_CONFIG
 
 load_dotenv()
 
-
 MODEL_NAME = "BAAI/bge-base-en-v1.5"
 
-# Closest skills for one embedding: the organization's own skills plus the
-# shared canonical catalogue, ranked by cosine similarity.
 SEARCH_QUERY = """
     SELECT
         skill_id,
@@ -40,12 +39,21 @@ SEARCH_QUERY = """
 """
 
 
-class VectorSearcher:  # pylint: disable=too-few-public-methods
-    """Embeds text with the BGE model and finds the closest skills in PostgreSQL."""
+class VectorSearcher:
+    """Embeds text and finds similar skills in PostgreSQL."""
 
     def __init__(self):
-        print(f"Loading model: {MODEL_NAME}")
-        self.model = SentenceTransformer(MODEL_NAME)
+        self.model = None
+
+    def _get_model(self):
+        """Load the embedding model only when it is first needed."""
+        if self.model is None:
+            print(f"Loading model: {MODEL_NAME}")
+            self.model = SentenceTransformer(
+                MODEL_NAME,
+                device="cpu",
+            )
+        return self.model
 
     def search(
         self,
@@ -54,7 +62,7 @@ class VectorSearcher:  # pylint: disable=too-few-public-methods
         top_k: int = 3,
     ):
         """Return the top_k closest rows as (skill_id, skill_name, similarity)."""
-        embedding = self.model.encode(
+        embedding = self._get_model().encode(
             text,
             normalize_embeddings=True,
         )
