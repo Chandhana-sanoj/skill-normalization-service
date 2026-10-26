@@ -11,11 +11,8 @@ DB_CONFIG = {
     "dbname": os.getenv("DB_NAME", "skill_normalization"),
     "user": os.getenv("DB_USER", "postgres"),
     "password": os.getenv("DB_PASSWORD"),
+    "sslmode": "require",
 }
-
-# Require SSL for the hosted database.
-if os.getenv("DB_HOST"):
-    DB_CONFIG["sslmode"] = "require"
 
 CORS_ORIGINS = [
     origin.strip()
@@ -25,3 +22,4 @@ CORS_ORIGINS = [
     ).split(",")
     if origin.strip()
 ]
+
