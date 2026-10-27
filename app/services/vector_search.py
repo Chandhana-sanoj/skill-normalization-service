@@ -9,51 +9,20 @@ from app.core.config import DB_CONFIG
 
 load_dotenv()
 
-MODEL_NAME = "BAAI/bge-base-en-v1.5"
-
-SEARCH_QUERY = """
-    SELECT
-        skill_id,
-        skill_name,
-        similarity
-    FROM (
-        SELECT
-            id AS skill_id,
-            name AS skill_name,
-            1 - (embedding <=> %s::vector) AS similarity
-        FROM organization_skill
-        WHERE organization_id = %s
-          AND embedding IS NOT NULL
-
-        UNION ALL
-
-        SELECT
-            id AS skill_id,
-            name AS skill_name,
-            1 - (embedding <=> %s::vector) AS similarity
-        FROM canonical_skill
-        WHERE embedding IS NOT NULL
-    ) AS combined_skills
-    ORDER BY similarity DESC
-    LIMIT %s;
-"""
+MODEL_NAME = "BAAI/bge-small-en-v1.5"
 
 
 class VectorSearcher:
     """Embeds text and finds similar skills in PostgreSQL."""
 
     def __init__(self):
-        self.model = None
-
-    def _get_model(self):
-        """Load the embedding model only when it is first needed."""
-        if self.model is None:
-            print(f"Loading model: {MODEL_NAME}")
-            self.model = SentenceTransformer(
-                MODEL_NAME,
-                device="cpu",
-            )
-        return self.model
+        # Load BGE Small when the VectorSearcher is initialized.
+        print(f"Loading embedding model at startup: {MODEL_NAME}")
+        self.model = SentenceTransformer(
+            MODEL_NAME,
+            device="cpu",
+        )
+        print("Embedding model loaded successfully.")
 
     def search(
         self,
@@ -62,17 +31,44 @@ class VectorSearcher:
         top_k: int = 3,
     ):
         """Return the top_k closest rows as (skill_id, skill_name, similarity)."""
-        embedding = self._get_model().encode(
+        embedding = self.model.encode(
             text,
             normalize_embeddings=True,
         )
 
         vector = embedding.tolist()
 
+        search_query = """
+            SELECT
+                skill_id,
+                skill_name,
+                similarity
+            FROM (
+                SELECT
+                    id AS skill_id,
+                    name AS skill_name,
+                    1 - (embedding_small <=> %s::vector) AS similarity
+                FROM organization_skill
+                WHERE organization_id = %s
+                  AND embedding_small IS NOT NULL
+
+                UNION ALL
+
+                SELECT
+                    id AS skill_id,
+                    name AS skill_name,
+                    1 - (embedding_small <=> %s::vector) AS similarity
+                FROM canonical_skill
+                WHERE embedding_small IS NOT NULL
+            ) AS combined_skills
+            ORDER BY similarity DESC
+            LIMIT %s;
+        """
+
         with psycopg.connect(**DB_CONFIG) as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    SEARCH_QUERY,
+                    search_query,
                     (
                         vector,
                         organization_id,
@@ -80,5 +76,4 @@ class VectorSearcher:
                         top_k,
                     ),
                 )
-
                 return cur.fetchall()

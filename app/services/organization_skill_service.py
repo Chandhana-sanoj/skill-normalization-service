@@ -1,17 +1,15 @@
-from sentence_transformers import SentenceTransformer
+
+"""Organization skill operations using the shared embedding model."""
 
 from app.repositories.organization_skill_repository import (
     OrganizationSkillRepository,
 )
 
 
-MODEL_NAME = "BAAI/bge-base-en-v1.5"
-
-
 class OrganizationSkillService:
-    def __init__(self):
+    def __init__(self, model):
         self.repository = OrganizationSkillRepository()
-        self.model = SentenceTransformer(MODEL_NAME)
+        self.model = model
 
     def create_skill(
         self,
@@ -19,17 +17,16 @@ class OrganizationSkillService:
         name: str,
         description: str | None = None,
     ) -> int:
-
         embedding = self.model.encode(
             name,
             normalize_embeddings=True,
         )
 
-        skill_id = self.repository.create(
+        return self.repository.create(
             organization_id=organization_id,
-            name=name,
+            raw_skill=name,
+            normalized_skill=name,
+            category=None,
             description=description,
             embedding=embedding.tolist(),
         )
-
-        return skill_id

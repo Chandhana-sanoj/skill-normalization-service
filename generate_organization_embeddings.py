@@ -1,65 +1,45 @@
-import os
-
-import psycopg
-from dotenv import load_dotenv
+﻿import psycopg
 from sentence_transformers import SentenceTransformer
+from app.core.config import DB_CONFIG
+
+MODEL_NAME = "BAAI/bge-small-en-v1.5"
 
 
-load_dotenv()
-
-
-MODEL_NAME = "BAAI/bge-base-en-v1.5"
-
-DB_CONFIG = {
-    "host": "127.0.0.1",
-    "dbname": "skill_normalization",
-    "user": "postgres",
-    "password": os.getenv("DB_PASSWORD"),
-}
-
-
-def generate_embeddings():
+def main():
     print(f"Loading model: {MODEL_NAME}")
-    model = SentenceTransformer(MODEL_NAME)
+    model = SentenceTransformer(MODEL_NAME, device="cpu")
 
     with psycopg.connect(**DB_CONFIG) as conn:
         with conn.cursor() as cur:
-
-            cur.execute(
-                """
+            cur.execute("""
                 SELECT id, name
-                FROM organization_skill
-                WHERE embedding IS NULL;
-                """
-            )
+                FROM public.organization_skill
+                ORDER BY id;
+            """)
+            rows = cur.fetchall()
+            print(f"Organization skills found: {len(rows)}")
 
-            skills = cur.fetchall()
-
-            if not skills:
-                print("No organization skills need embeddings.")
+            if not rows:
+                print("No organization skills found. Stopping.")
                 return
 
-            for skill_id, skill_name in skills:
-                embedding = model.encode(
-                    skill_name,
+            for skill_id, name in rows:
+                vector = model.encode(
+                    name,
                     normalize_embeddings=True,
                 )
 
-                cur.execute(
-                    """
-                    UPDATE organization_skill
-                    SET embedding = %s::vector
+                cur.execute("""
+                    UPDATE public.organization_skill
+                    SET embedding_small = %s::vector
                     WHERE id = %s;
-                    """,
-                    (embedding.tolist(), skill_id),
-                )
+                """, (vector.tolist(), skill_id))
 
-                print(f"Embedded: {skill_name}")
+                conn.commit()
+                print(f"Processed: {name}")
 
-        conn.commit()
-
-    print("Organization embeddings generated successfully.")
+    print("Organization embedding generation finished.")
 
 
 if __name__ == "__main__":
-    generate_embeddings()
+    main()
