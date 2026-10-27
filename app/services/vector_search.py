@@ -1,11 +1,21 @@
-
 """Vector similarity search over canonical and organization skills (pgvector)."""
 
+import os
+
+# Reduce CPU thread overhead.
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+import torch
 import psycopg
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 
 from app.core.config import DB_CONFIG
+
+torch.set_num_threads(1)
+torch.set_num_interop_threads(1)
 
 load_dotenv()
 
@@ -16,12 +26,14 @@ class VectorSearcher:
     """Embeds text and finds similar skills in PostgreSQL."""
 
     def __init__(self):
-        # Load BGE Small when the VectorSearcher is initialized.
-        print(f"Loading embedding model at startup: {MODEL_NAME}")
+        print(f"Loading embedding model: {MODEL_NAME}")
+
         self.model = SentenceTransformer(
             MODEL_NAME,
             device="cpu",
+            model_kwargs={"low_cpu_mem_usage": True},
         )
+
         print("Embedding model loaded successfully.")
 
     def search(
