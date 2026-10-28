@@ -57,10 +57,7 @@ def _validate_fields(raw_skill: str, normalized_skill: str) -> None:
 
 
 def _make_embedding(request: Request, normalized_skill: str) -> list[float]:
-    return request.app.state.vector_searcher.model.encode(
-        normalized_skill,
-        normalize_embeddings=True,
-    ).tolist()
+    return request.app.state.vector_searcher.make_embedding(normalized_skill)
 
 
 def _skill_response(skill_id: int, organization_id: int, payload, message: str) -> dict:

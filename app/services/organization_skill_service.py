@@ -17,16 +17,12 @@ class OrganizationSkillService:
         name: str,
         description: str | None = None,
     ) -> int:
-        embedding = self.model.encode(
-            name,
-            normalize_embeddings=True,
-        )
-
+        embedding = self.model.make_embedding(name)
         return self.repository.create(
             organization_id=organization_id,
             raw_skill=name,
             normalized_skill=name,
             category=None,
             description=description,
-            embedding=embedding.tolist(),
+            embedding=embedding,
         )

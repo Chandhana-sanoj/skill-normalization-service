@@ -1,23 +1,10 @@
-"""Vector similarity search over canonical and organization skills (pgvector)."""
 
-import os
+"""Vector similarity search over canonical and organization skills."""
 
-# Reduce CPU thread overhead.
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-import torch
 import psycopg
-from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer
+from fastembed import TextEmbedding
 
 from app.core.config import DB_CONFIG
-
-torch.set_num_threads(1)
-torch.set_num_interop_threads(1)
-
-load_dotenv()
 
 MODEL_NAME = "BAAI/bge-small-en-v1.5"
 
@@ -28,13 +15,14 @@ class VectorSearcher:
     def __init__(self):
         print(f"Loading embedding model: {MODEL_NAME}")
 
-        self.model = SentenceTransformer(
-            MODEL_NAME,
-            device="cpu",
-            model_kwargs={"low_cpu_mem_usage": True},
-        )
+        self.model = TextEmbedding(model_name=MODEL_NAME)
 
         print("Embedding model loaded successfully.")
+
+    def make_embedding(self, text: str) -> list[float]:
+        """Generate a normalized embedding vector for text."""
+        embedding = next(self.model.embed([text], normalize=True))
+        return embedding.tolist()
 
     def search(
         self,
@@ -43,12 +31,7 @@ class VectorSearcher:
         top_k: int = 3,
     ):
         """Return the top_k closest rows as (skill_id, skill_name, similarity)."""
-        embedding = self.model.encode(
-            text,
-            normalize_embeddings=True,
-        )
-
-        vector = embedding.tolist()
+        vector = self.make_embedding(text)
 
         search_query = """
             SELECT
@@ -81,11 +64,6 @@ class VectorSearcher:
             with conn.cursor() as cur:
                 cur.execute(
                     search_query,
-                    (
-                        vector,
-                        organization_id,
-                        vector,
-                        top_k,
-                    ),
+                    (vector, organization_id, vector, top_k),
                 )
                 return cur.fetchall()
