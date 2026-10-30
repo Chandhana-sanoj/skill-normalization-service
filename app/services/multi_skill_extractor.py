@@ -62,15 +62,35 @@ class MultiSkillExtractor:
         "proficient", "proficiency", "strong", "good", "conceptual", "understanding",
         "fundamentals", "concepts", "overview", "familiarity", "exposure",
     }
+    
     GENERIC = {
-        "programming", "language", "skills", "skill", "tools", "tool", "framework",
-        "development", "developer", "knowledge", "experience", "technologies",
-        "project", "projects", "hands-on", "working", "worked", "years", "year",
+    "programming", "language", "skills", "skill", "tools", "tool", "framework",
+    "development", "developer", "knowledge", "experience", "technologies",
+    "project", "projects", "hands-on", "working", "worked", "years", "year",
+    "ability", "capability", "proficiency", "competence",
+    "competencies", "competent", "understanding", "familiarity", "familiar",
+    "concepts", "conceptual", "fundamentals", "basics",
     }
     CONNECTORS = {
         "and", "with", "for", "using", "including", "plus",
         "in", "on", "of", "or", "to", "also", "the", "a", "an", "as", "&",
     }
+    
+    INTRO_PREFIX_RE = re.compile(
+    r"^(?:"
+    r"(?:the\s+)?ability\s+to|"
+    r"(?:(?:good|strong|basic|solid|excellent)\s+)?understanding\s+of|"
+    r"(?:(?:good|strong|basic|working|practical)\s+)?knowledge\s+of|"
+    r"experience\s+(?:in|with)|"
+    r"experienced\s+in|"
+    r"working\s+experience\s+in|"
+    r"familiarity\s+with|"
+    r"proficiency\s+in|"
+    r"proficient\s+in|"
+    r"skilled\s+in"
+    r")\s+",
+    re.IGNORECASE,
+)
 
     def __init__(self, alias_map, canonical_map, ambiguous_names=None, max_segment_words=15):
         self.ambiguous_names = {n.lower() for n in (ambiguous_names or self.DEFAULT_AMBIGUOUS)}
@@ -219,11 +239,26 @@ class MultiSkillExtractor:
         seg = segment.strip()
         if not seg:
             return []
+        
         whole = self._whole_match(seg)
         if whole:
             return [whole]
 
+        # Remove introductory wording only when the remaining text
+        # contains at least one catalogue-recognized skill.
+        intro_match = self.INTRO_PREFIX_RE.match(seg)
+
+        if intro_match:
+            remaining_text = seg[intro_match.end():].strip()
+
+            if remaining_text:
+                extracted = self._extract_segment(remaining_text, label_only)
+
+                if any(candidate.skill_id is not None for candidate in extracted):
+                    return extracted
+
         words = seg.split()
+        
         keys = [self._clean(w) for w in words]
         if len(words) > self.max_segment_words:
             return [] if label_only else [Candidate(self._join(keys), None)]
