@@ -17,7 +17,7 @@ def get_catalog(
     q: str = Query(default="", alias="q"),
     category: str = Query(default=""),
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=25, ge=1, le=200),
+    limit: int = Query(default=25, ge=1, le=10000),
 ):
     """Return the canonical skill catalogue with optional search, category filter, and pagination."""
     canonical_map = request.app.state.canonical_map

@@ -1,4 +1,5 @@
 
+
 """Vector similarity search over canonical and organization skills (pgvector)."""
 
 import psycopg
@@ -10,6 +11,7 @@ from app.core.config import DB_CONFIG
 load_dotenv()
 
 MODEL_NAME = "BAAI/bge-base-en-v1.5"
+
 
 SEARCH_QUERY = """
     SELECT
@@ -43,17 +45,12 @@ class VectorSearcher:
     """Embeds text and finds similar skills in PostgreSQL."""
 
     def __init__(self):
-        self.model = None
-
-    def _get_model(self):
-        """Load the embedding model only when it is first needed."""
-        if self.model is None:
-            print(f"Loading model: {MODEL_NAME}")
-            self.model = SentenceTransformer(
-                MODEL_NAME,
-                device="cpu",
-            )
-        return self.model
+        print(f"Loading model: {MODEL_NAME}")
+        self.model = SentenceTransformer(
+            MODEL_NAME,
+            device="cpu",
+        )
+        print("BGE-base model loaded successfully.")
 
     def search(
         self,
@@ -62,7 +59,7 @@ class VectorSearcher:
         top_k: int = 3,
     ):
         """Return the top_k closest rows as (skill_id, skill_name, similarity)."""
-        embedding = self._get_model().encode(
+        embedding = self.model.encode(
             text,
             normalize_embeddings=True,
         )

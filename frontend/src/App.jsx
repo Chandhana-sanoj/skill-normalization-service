@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import "./App.css";
 
 // Backend URL can be overridden in .env with VITE_API_BASE_URL.
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 
 async function apiRequest(path, { token, ...options } = {}) {
   const headers = { Accept: "application/json", ...(options.body ? { "Content-Type": "application/json" } : {}), ...options.headers };
@@ -32,6 +32,7 @@ function makeSession(user, token) {
     role: ["org_admin", "admin", "organization_admin"].includes(rawRole) ? "Admin" : "User",
     orgName: user.organization_name || user.org_name || "Your organization",
     orgId: user.organization_id || "",
+    userId: user.user_id || user.id || 0,
   };
 }
 
@@ -41,6 +42,7 @@ const NAV_ITEMS = [
   { id: "unresolved", label: "Unresolved Skills",    adminOnly: true  },
   { id: "normalize",  label: "Normalize Skill",      adminOnly: false }, // NEW
   { id: "output",     label: "Normalization Output", adminOnly: false },
+  { id: "users",      label: "User Management",      adminOnly: true  },
 ];
 
 const PAGE_SIZE = 25;
@@ -74,6 +76,263 @@ function SearchBar({ id, value, onChange, placeholder, label }) {
       <input id={id} type="search" className="toolbar-input" placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} aria-label={label} />
     </div>
   );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// EXCEL EXPORT HELPERS
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Generate a genuine OOXML .xlsx file and trigger a browser download.
+ * Uses only browser-native APIs — no npm packages required.
+ *
+ * @param {string[][]} rows   - 2-D array of cell values (strings)
+ * @param {string[]}   headers - Column header labels
+ * @param {string}     filename - Base filename (date appended automatically)
+ */
+function exportXlsx(rows, headers, filename) {
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  function xmlEsc(v) {
+    return String(v ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&apos;")
+      // Strip characters illegal in XML 1.0
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
+  }
+
+  // Column letter helper (A, B, …, Z, AA, AB, …)
+  function colLetter(n) {
+    let s = "";
+    while (n > 0) { n--; s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26); }
+    return s;
+  }
+
+  // Build a shared-strings table so cell values reference an index.
+  // This keeps the worksheet XML lean and handles long strings correctly.
+  const strIndex = new Map();
+  const sharedStrings = [];
+  function si(v) {
+    const s = String(v ?? "");
+    if (!strIndex.has(s)) { strIndex.set(s, sharedStrings.length); sharedStrings.push(s); }
+    return strIndex.get(s);
+  }
+
+  // ── Build worksheet rows ───────────────────────────────────────────────────
+  const allRows = [headers, ...rows];
+  const rowXmls = allRows.map((row, ri) => {
+    const r = ri + 1;
+    const cells = row.map((val, ci) => {
+      const col = colLetter(ci + 1);
+      const ref = `${col}${r}`;
+      const idx = si(val);
+      // s="1" → bold style (header row only, row index 0)
+      return ri === 0
+        ? `<c r="${ref}" t="s" s="1"><v>${idx}</v></c>`
+        : `<c r="${ref}" t="s"><v>${idx}</v></c>`;
+    });
+    return `<row r="${r}">${cells.join("")}</row>`;
+  });
+
+  // ── OOXML file parts ───────────────────────────────────────────────────────
+  const sharedStringsXml = [
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`,
+    `<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"`,
+    ` count="${sharedStrings.length}" uniqueCount="${sharedStrings.length}">`,
+    ...sharedStrings.map(s => `<si><t xml:space="preserve">${xmlEsc(s)}</t></si>`),
+    `</sst>`,
+  ].join("");
+
+  const worksheetXml = [
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`,
+    `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"`,
+    ` xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">`,
+    `<sheetData>`,
+    ...rowXmls,
+    `</sheetData>`,
+    `</worksheet>`,
+  ].join("");
+
+  const stylesXml = [
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`,
+    `<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">`,
+    `<fonts count="2">`,
+    `<font><sz val="11"/><name val="Calibri"/></font>`,
+    `<font><b/><sz val="11"/><name val="Calibri"/></font>`,
+    `</fonts>`,
+    `<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>`,
+    `<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>`,
+    `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>`,
+    `<cellXfs count="2">`,
+    `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>`,
+    `<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0"/>`,
+    `</cellXfs>`,
+    `</styleSheet>`,
+  ].join("");
+
+  const workbookXml = [
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`,
+    `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"`,
+    ` xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">`,
+    `<sheets><sheet name="Catalog" sheetId="1" r:id="rId1"/></sheets>`,
+    `</workbook>`,
+  ].join("");
+
+  const workbookRels = [
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`,
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`,
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>`,
+    `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>`,
+    `<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>`,
+    `</Relationships>`,
+  ].join("");
+
+  const rootRels = [
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`,
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`,
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>`,
+    `</Relationships>`,
+  ].join("");
+
+  const contentTypes = [
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`,
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">`,
+    `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>`,
+    `<Default Extension="xml" ContentType="application/xml"/>`,
+    `<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>`,
+    `<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`,
+    `<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>`,
+    `<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>`,
+    `</Types>`,
+  ].join("");
+
+  // ── Build .xlsx (ZIP) manually using a minimal ZIP writer ──────────────────
+  // A .xlsx file is a ZIP archive. We write it as a sequence of local file
+  // headers + compressed(stored) file data, then the central directory.
+  const enc = new TextEncoder();
+
+  function toBytes(str) { return enc.encode(str); }
+
+  function u32le(n) {
+    const b = new Uint8Array(4);
+    b[0] = n & 0xff; b[1] = (n >> 8) & 0xff;
+    b[2] = (n >> 16) & 0xff; b[3] = (n >> 24) & 0xff;
+    return b;
+  }
+  function u16le(n) {
+    const b = new Uint8Array(2);
+    b[0] = n & 0xff; b[1] = (n >> 8) & 0xff;
+    return b;
+  }
+
+  function crc32(data) {
+    let crc = 0xFFFFFFFF;
+    const table = crc32.table || (crc32.table = (() => {
+      const t = new Uint32Array(256);
+      for (let i = 0; i < 256; i++) {
+        let c = i;
+        for (let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        t[i] = c;
+      }
+      return t;
+    })());
+    for (let i = 0; i < data.length; i++) crc = table[(crc ^ data[i]) & 0xff] ^ (crc >>> 8);
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  function concat(...arrays) {
+    const total = arrays.reduce((s, a) => s + a.length, 0);
+    const out = new Uint8Array(total);
+    let off = 0;
+    for (const a of arrays) { out.set(a, off); off += a.length; }
+    return out;
+  }
+
+  const files = [
+    { name: "[Content_Types].xml",              data: toBytes(contentTypes)    },
+    { name: "_rels/.rels",                       data: toBytes(rootRels)        },
+    { name: "xl/workbook.xml",                   data: toBytes(workbookXml)     },
+    { name: "xl/_rels/workbook.xml.rels",        data: toBytes(workbookRels)    },
+    { name: "xl/worksheets/sheet1.xml",          data: toBytes(worksheetXml)    },
+    { name: "xl/sharedStrings.xml",              data: toBytes(sharedStringsXml)},
+    { name: "xl/styles.xml",                     data: toBytes(stylesXml)       },
+  ];
+
+  const localHeaders = [];
+  const centralHeaders = [];
+  let offset = 0;
+
+  for (const f of files) {
+    const nameBytes = toBytes(f.name);
+    const crc = crc32(f.data);
+    const size = f.data.length;
+
+    // Local file header (method=0 STORED)
+    const lh = concat(
+      new Uint8Array([0x50,0x4B,0x03,0x04]), // signature
+      u16le(20),          // version needed
+      u16le(0),           // flags
+      u16le(0),           // compression STORED
+      u16le(0), u16le(0), // mod time/date
+      u32le(crc),
+      u32le(size),        // compressed size
+      u32le(size),        // uncompressed size
+      u16le(nameBytes.length),
+      u16le(0),           // extra length
+      nameBytes,
+    );
+
+    localHeaders.push(concat(lh, f.data));
+
+    // Central directory header
+    const cd = concat(
+      new Uint8Array([0x50,0x4B,0x01,0x02]), // signature
+      u16le(20),          // version made by
+      u16le(20),          // version needed
+      u16le(0),           // flags
+      u16le(0),           // STORED
+      u16le(0), u16le(0), // mod time/date
+      u32le(crc),
+      u32le(size),
+      u32le(size),
+      u16le(nameBytes.length),
+      u16le(0),           // extra
+      u16le(0),           // comment
+      u16le(0),           // disk start
+      u16le(0),           // internal attr
+      u32le(0),           // external attr
+      u32le(offset),      // local header offset
+      nameBytes,
+    );
+
+    centralHeaders.push(cd);
+    offset += lh.length + f.data.length;
+  }
+
+  const centralDir = concat(...centralHeaders);
+  const eocd = concat(
+    new Uint8Array([0x50,0x4B,0x05,0x06]), // end-of-central-dir signature
+    u16le(0), u16le(0),                    // disk numbers
+    u16le(files.length), u16le(files.length),
+    u32le(centralDir.length),
+    u32le(offset),
+    u16le(0),                              // comment length
+  );
+
+  const zipBytes = concat(...localHeaders, centralDir, eocd);
+
+  // ── Trigger download ───────────────────────────────────────────────────────
+  const blob = new Blob([zipBytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href     = url;
+  a.download = `${filename}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -150,9 +409,76 @@ function CatalogPage({ session }) {
               </div>
             )
           }
-          <Paginator page={page} total={total} pageSize={PAGE_SIZE} onPrev={() => setPage((p) => p - 1)} onNext={() => setPage((p) => p + 1)} />
+          <div className="catalog-footer"><Paginator page={page} total={total} pageSize={PAGE_SIZE} onPrev={() => setPage((p) => p - 1)} onNext={() => setPage((p) => p + 1)} />{total > 0 && <CatalogExportButton search={debouncedSearch} category={category} total={total} token={session.token} />}</div>
         </>
       )}
+    </div>
+  );
+}
+
+
+// ── Catalog Excel export button (fetches up to 10,000 matching records) ───────
+const EXPORT_LIMIT = 10000;
+
+function CatalogExportButton({ search, category, total, token }) {
+  const [exporting, setExporting]     = useState(false);
+  const [exportError, setExportError] = useState(null);
+  const [limitWarning, setLimitWarning] = useState(false);
+
+  async function handleExcelExport() {
+    setExporting(true); setExportError(null); setLimitWarning(false);
+    try {
+      const fetchCount = Math.min(total, EXPORT_LIMIT);
+      const truncated  = total > EXPORT_LIMIT;
+
+      const params = new URLSearchParams();
+      if (search)   params.set("q", search);
+      if (category) params.set("category", category);
+      params.set("page",  "1");
+      params.set("limit", String(fetchCount));
+
+      const data = await apiRequest(`/api/v1/catalog?${params.toString()}`, { token });
+      const items = data.items ?? [];
+
+      const headers = ["ID", "Normalized Skill", "Category", "Description"];
+      const rows = items.map((item) => [
+        String(item.id          ?? ""),
+        item.normalizedSkill    ?? "",
+        item.category           ?? "",
+        item.description        ?? "",
+      ]);
+
+      exportXlsx(rows, headers, "skill-catalog");
+
+      if (truncated) setLimitWarning(true);
+    } catch (err) {
+      setExportError(err.message || "Export failed.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return (
+    <div className="export-group">
+      <button
+        className="btn-secondary btn-export"
+        onClick={handleExcelExport}
+        disabled={exporting || total === 0}
+        aria-label="Export catalog to Excel"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        {exporting ? "Exporting…" : `Export Excel${total > EXPORT_LIMIT ? ` (first ${EXPORT_LIMIT.toLocaleString()})` : ""}`}
+      </button>
+      {limitWarning && (
+        <span className="export-warning" role="status">
+          Only the first {EXPORT_LIMIT.toLocaleString()} of {total.toLocaleString()} records were exported. Narrow your filters to export all results.
+        </span>
+      )}
+      {exportError && <span className="export-error" role="alert">{exportError}</span>}
     </div>
   );
 }
@@ -1010,6 +1336,227 @@ function NormalizeSkillPage({ token }) {
   );
 }
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// USER MANAGEMENT PAGE  (admin only)
+// ══════════════════════════════════════════════════════════════════════════════
+
+function AddUserModal({ onSave, onClose, saving, saveError }) {
+  const [form, setForm] = useState({ username: "", password: "", confirmPassword: "" });
+  const [validationError, setValidationError] = useState(null);
+
+  function handleChange(e) { setForm((prev) => ({ ...prev, [e.target.name]: e.target.value })); setValidationError(null); }
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    const { username, password, confirmPassword } = form;
+    if (!username.trim()) { setValidationError("Username is required."); return; }
+    if (username.trim().length < 3) { setValidationError("Username must be at least 3 characters."); return; }
+    if (!/^[a-zA-Z0-9_.-]+$/.test(username.trim())) { setValidationError("Username may only contain letters, digits, underscores, dots, or hyphens."); return; }
+    if (!password) { setValidationError("Password is required."); return; }
+    if (password.length < 8) { setValidationError("Password must be at least 8 characters."); return; }
+    if (password !== confirmPassword) { setValidationError("Passwords do not match."); return; }
+    setValidationError(null);
+    onSave({ username: username.trim(), password });
+  }
+
+  function handleBackdropClick(e) { if (e.target === e.currentTarget) onClose(); }
+
+  return (
+    <div className="modal-backdrop" onClick={handleBackdropClick} role="dialog" aria-modal="true" aria-label="Add user">
+      <div className="modal-card">
+        <div className="modal-header">
+          <h2 className="modal-title">Add User</h2>
+          <button className="modal-close" onClick={onClose} aria-label="Close">✕</button>
+        </div>
+        {(saveError || validationError) && (
+          <div className="modal-error" role="alert">
+            <strong>Could not create user.</strong> {saveError || validationError}
+          </div>
+        )}
+        <form className="modal-form" onSubmit={handleSubmit} noValidate>
+          <div className="form-field">
+            <label htmlFor="new-username">Username <span className="required">*</span></label>
+            <input id="new-username" name="username" type="text" value={form.username} onChange={handleChange} placeholder="e.g. jane.doe" autoComplete="off" required disabled={saving} />
+            <span className="field-hint">3–50 characters; letters, digits, underscores, dots, or hyphens.</span>
+          </div>
+          <div className="form-field">
+            <label htmlFor="new-password">Password <span className="required">*</span></label>
+            <input id="new-password" name="password" type="password" value={form.password} onChange={handleChange} placeholder="At least 8 characters" autoComplete="new-password" required disabled={saving} />
+          </div>
+          <div className="form-field">
+            <label htmlFor="new-confirm-password">Confirm Password <span className="required">*</span></label>
+            <input id="new-confirm-password" name="confirmPassword" type="password" value={form.confirmPassword} onChange={handleChange} placeholder="Repeat the password" autoComplete="new-password" required disabled={saving} />
+          </div>
+          <div className="modal-actions">
+            <button type="button" className="btn-secondary" onClick={onClose} disabled={saving}>Cancel</button>
+            <button type="submit" className="btn-primary" disabled={saving}>{saving ? "Creating…" : "Create User"}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function UserManagementPage({ session }) {
+  if (session.role !== "Admin") return <AccessDeniedPage />;
+  return <UserManagementAdminPage session={session} />;
+}
+
+function UserManagementAdminPage({ session }) {
+  const [users, setUsers]       = useState([]);
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [saving, setSaving]     = useState(false);
+  const [saveError, setSaveError] = useState(null);
+  const [successMsg, setSuccessMsg] = useState(null);
+  const [deleteError, setDeleteError] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true); setError(null);
+    try {
+      const data = await apiRequest("/api/v1/organizations/me/users", { token: session.token });
+      setUsers(data.items ?? []);
+    } catch (err) {
+      setError(err.message || "Could not load users.");
+    } finally {
+      setLoading(false);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { load(); }, [load]);
+
+  // Auto-dismiss success message
+  useEffect(() => {
+    if (!successMsg) return;
+    const t = setTimeout(() => setSuccessMsg(null), 3500);
+    return () => clearTimeout(t);
+  }, [successMsg]);
+
+  async function handleCreateUser(formData) {
+    setSaving(true); setSaveError(null);
+    try {
+      await apiRequest("/api/v1/organizations/me/users", {
+        method: "POST",
+        token: session.token,
+        body: JSON.stringify({ username: formData.username, password: formData.password }),
+      });
+      setModalOpen(false);
+      setSuccessMsg(`User "${formData.username}" created successfully.`);
+      load();
+    } catch (err) {
+      setSaveError(err.message || "Could not create user.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDeleteUser(user) {
+    setDeleteError(null);
+    if (!window.confirm(`Delete user "${user.username}"? This action cannot be undone.`)) return;
+    try {
+      await apiRequest(`/api/v1/organizations/me/users/${user.id}`, {
+        method: "DELETE",
+        token: session.token,
+      });
+      setSuccessMsg(`User "${user.username}" deleted.`);
+      load();
+    } catch (err) {
+      setDeleteError(err.message || "Delete failed.");
+    }
+  }
+
+  function displayRole(role) {
+    if (role === "org_admin") return "Admin";
+    return "User";
+  }
+
+  return (
+    <div className="page">
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">User Management</h1>
+          <p className="page-subtitle">
+            Manage members of <strong>{session.orgName}</strong>.&ensp;
+            {!loading && !error && <span>{users.length} {users.length === 1 ? "user" : "users"}</span>}
+          </p>
+        </div>
+        <button className="btn-primary" onClick={() => { setSaveError(null); setModalOpen(true); }}>+ Add User</button>
+      </div>
+
+      {successMsg && (
+        <div className="state-success" role="status" aria-live="polite">{successMsg}</div>
+      )}
+      {deleteError && (
+        <div className="state-error" role="alert"><strong>Delete failed.</strong><p>{deleteError}</p></div>
+      )}
+      {loading && <div className="state-loading" aria-live="polite"><span className="spinner" aria-hidden="true" />Loading users…</div>}
+      {!loading && error && (
+        <div className="state-error" role="alert">
+          <strong>Could not load users.</strong><p>{error}</p>
+          <button className="retry-btn" onClick={load}>Try again</button>
+        </div>
+      )}
+      {!loading && !error && (
+        users.length === 0
+          ? (
+            <div className="table-empty">
+              <p>No users found. Use the "Add User" button to create one.</p>
+            </div>
+          )
+          : (
+            <div className="table-wrapper">
+              <table className="data-table" aria-label="Organization users">
+                <thead>
+                  <tr>
+                    <th scope="col">Username</th>
+                    <th scope="col">Role</th>
+                    <th scope="col"><span className="sr-only">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map((user) => (
+                    <tr key={user.id}>
+                      <td className="cell-skill">{user.username}</td>
+                      <td>
+                        <span className={`role-badge role-badge--${user.role === "org_admin" ? "admin" : "user"}`}>
+                          {displayRole(user.role)}
+                        </span>
+                      </td>
+                      <td className="cell-actions">
+                        {user.id === session.userId
+                          ? <span className="cell-empty" title="You cannot delete your own account">You</span>
+                          : (
+                            <button
+                              className="action-btn action-btn--delete"
+                              onClick={() => handleDeleteUser(user)}
+                              aria-label={`Delete ${user.username}`}
+                            >
+                              Delete
+                            </button>
+                          )
+                        }
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+      )}
+      {modalOpen && (
+        <AddUserModal
+          onSave={handleCreateUser}
+          onClose={() => { setModalOpen(false); setSaveError(null); }}
+          saving={saving}
+          saveError={saveError}
+        />
+      )}
+    </div>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // SIDEBAR
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1051,6 +1598,7 @@ function NavIcon({ id }) {
     unresolved:   (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>),
     normalize:    (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" /></svg>),
     output:       (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" /></svg>),
+    users:        (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>),
   };
   return icons[id] ?? null;
 }
@@ -1064,7 +1612,129 @@ function PageRouter({ pageId, session, outputCache, setOutputCache }) {
   if (pageId === "unresolved") return <UnresolvedPage session={session} />;
   if (pageId === "normalize")  return <NormalizeSkillPage token={session.token} />;
   if (pageId === "output")     return <OutputPage session={session} outputCache={outputCache} setOutputCache={setOutputCache} />;
+  if (pageId === "users")      return <UserManagementPage session={session} />;
   return null;
+}
+
+
+// Registration form component (used on the login page)
+function RegisterForm({ onSuccess, onCancel }) {
+  const [form, setForm] = useState({ organization_name: "", username: "", password: "", confirmPassword: "" });
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState(null);
+  const [validationError, setValidationError] = useState(null);
+
+  function handleChange(e) {
+    setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
+    setValidationError(null);
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const { organization_name, username, password, confirmPassword } = form;
+
+    // Client-side validation
+    if (!organization_name.trim() || organization_name.trim().length < 2) {
+      setValidationError("Organization name must be at least 2 characters."); return;
+    }
+    if (!username.trim() || username.trim().length < 3) {
+      setValidationError("Username must be at least 3 characters."); return;
+    }
+    if (!/^[a-zA-Z0-9_.-]+$/.test(username.trim())) {
+      setValidationError("Username may only contain letters, digits, underscores, dots, or hyphens."); return;
+    }
+    if (password.length < 8) {
+      setValidationError("Password must be at least 8 characters."); return;
+    }
+    if (password !== confirmPassword) {
+      setValidationError("Passwords do not match."); return;
+    }
+
+    setValidationError(null); setError(null); setLoading(true);
+    try {
+      await apiRequest("/api/v1/auth/register", {
+        method: "POST",
+        body: JSON.stringify({
+          organization_name: organization_name.trim(),
+          username: username.trim(),
+          password,
+        }),
+      });
+      onSuccess(username.trim());
+    } catch (err) {
+      setError(err.message || "Registration failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} noValidate>
+      <label htmlFor="reg-orgname">Organization Name</label>
+      <input
+        id="reg-orgname"
+        name="organization_name"
+        type="text"
+        placeholder="e.g. Acme Corp"
+        value={form.organization_name}
+        onChange={handleChange}
+        autoComplete="organization"
+        required
+        disabled={loading}
+      />
+      <label htmlFor="reg-username">Admin Username</label>
+      <input
+        id="reg-username"
+        name="username"
+        type="text"
+        placeholder="Choose a username"
+        value={form.username}
+        onChange={handleChange}
+        autoComplete="username"
+        required
+        disabled={loading}
+      />
+      <label htmlFor="reg-password">Password</label>
+      <input
+        id="reg-password"
+        name="password"
+        type="password"
+        placeholder="At least 8 characters"
+        value={form.password}
+        onChange={handleChange}
+        autoComplete="new-password"
+        required
+        disabled={loading}
+      />
+      <label htmlFor="reg-confirm">Confirm Password</label>
+      <input
+        id="reg-confirm"
+        name="confirmPassword"
+        type="password"
+        placeholder="Repeat your password"
+        value={form.confirmPassword}
+        onChange={handleChange}
+        autoComplete="new-password"
+        required
+        disabled={loading}
+      />
+      {(validationError || error) && (
+        <div className="state-error" role="alert" style={{ marginBottom: "16px" }}>
+          <strong>{validationError ? "Please fix the following:" : "Registration failed."}</strong>
+          <p>{validationError || error}</p>
+        </div>
+      )}
+      <button className="login-button" type="submit" disabled={loading}>
+        {loading ? "Creating account…" : "Create Account"}
+      </button>
+      <div className="login-footer">
+        Already have an account?{" "}
+        <button type="button" className="login-toggle-btn" onClick={onCancel} disabled={loading}>
+          Sign in
+        </button>
+      </div>
+    </form>
+  );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1078,6 +1748,8 @@ function App() {
   const [activePage, setActivePage] = useState("normalize");
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState(null);
+  const [showRegister, setShowRegister] = useState(false);
+  const [registerSuccess, setRegisterSuccess] = useState(null);
   // Lifted state for OutputPage cache — persists across navigations.
   const [outputCache, setOutputCache] = useState({ items: [], total: 0 });
 
@@ -1107,6 +1779,8 @@ function App() {
     setUsername("");
     setPassword("");
     setLoginError(null);
+    setShowRegister(false);
+    setRegisterSuccess(null);
     setActivePage("normalize");
     setOutputCache({ items: [], total: 0 });
   }
@@ -1116,18 +1790,37 @@ function App() {
       <main className="login-page">
         <section className="login-card">
           <div className="brand"><div className="brand-icon">S</div><span>skillbase</span></div>
-          <div className="login-heading"><h1>Welcome back</h1><p>Sign in to your workspace.</p></div>
-          <form onSubmit={handleLogin}>
-            <label htmlFor="username">Username</label>
-            <input id="username" type="text" placeholder="Enter your username" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" required disabled={loginLoading} />
-            <label htmlFor="password">Password</label>
-            <div className="password-input">
-              <input id="password" type={showPassword ? "text" : "password"} placeholder="Enter your password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required disabled={loginLoading} />
-              <button type="button" className="show-password" onClick={() => setShowPassword(!showPassword)} disabled={loginLoading}>{showPassword ? "Hide" : "Show"}</button>
-            </div>
-            {loginError && <div className="state-error" role="alert"><strong>Sign-in failed.</strong><p>{loginError}</p></div>}
-            <button className="login-button" type="submit" disabled={loginLoading}>{loginLoading ? "Signing in…" : "Sign in"}</button>
-          </form>
+          {showRegister ? (
+            <>
+              <div className="login-heading"><h1>Create Account</h1><p>Register your organisation and admin account.</p></div>
+              <RegisterForm
+                onSuccess={(uname) => { setShowRegister(false); setRegisterSuccess(`Account created! Sign in as "${uname}".`); }}
+                onCancel={() => { setShowRegister(false); setRegisterSuccess(null); }}
+              />
+            </>
+          ) : (
+            <>
+              <div className="login-heading"><h1>Welcome back</h1><p>Sign in to your workspace.</p></div>
+              {registerSuccess && <div className="state-success" role="status" style={{ marginBottom: "16px" }}>{registerSuccess}</div>}
+              <form onSubmit={handleLogin}>
+                <label htmlFor="username">Username</label>
+                <input id="username" type="text" placeholder="Enter your username" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" required disabled={loginLoading} />
+                <label htmlFor="password">Password</label>
+                <div className="password-input">
+                  <input id="password" type={showPassword ? "text" : "password"} placeholder="Enter your password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required disabled={loginLoading} />
+                  <button type="button" className="show-password" onClick={() => setShowPassword(!showPassword)} disabled={loginLoading}>{showPassword ? "Hide" : "Show"}</button>
+                </div>
+                {loginError && <div className="state-error" role="alert"><strong>Sign-in failed.</strong><p>{loginError}</p></div>}
+                <button className="login-button" type="submit" disabled={loginLoading}>{loginLoading ? "Signing in…" : "Sign in"}</button>
+              </form>
+              <div className="login-footer">
+                New organisation?{" "}
+                <button type="button" className="login-toggle-btn" onClick={() => { setShowRegister(true); setLoginError(null); setRegisterSuccess(null); }}>
+                  Create an account
+                </button>
+              </div>
+            </>
+          )}
         </section>
       </main>
     );

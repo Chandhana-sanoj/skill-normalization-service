@@ -8,6 +8,8 @@ from app.api.routes.catalog import router as catalog_router
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import CORS_ORIGINS
 
+from app.api.routes.users import router as users_router
+
 from app.api.routes.normalize import router as normalize_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.organizations import router as organizations_router
@@ -61,6 +63,7 @@ app.include_router(organizations_router)
 app.include_router(unresolved_router)
 app.include_router(history_router)
 app.include_router(catalog_router)
+app.include_router(users_router)
 
 
 @app.get("/health")

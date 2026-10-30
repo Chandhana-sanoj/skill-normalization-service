@@ -1,0 +1,16 @@
+
+.venv
+__pycache__
+.pytest_cache
+.git
+.env
+*.pyc
+*.pyo
+*.xlsx
+*.csv
+node_modules
+frontend/node_modules
+frontend/dist
+backups
+experiments
+catalogue_benchmark

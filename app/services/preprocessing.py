@@ -21,15 +21,3 @@ _VERSION_RE = re.compile(
     re.IGNORECASE,
 )
 
-
-def extract_version(text: str) -> tuple[str, str | None]:
-    """Split 'Skill 3.10' into ('Skill', '3.10'), or return (text, None).
-
-    Only strips a trailing bare version number (optionally prefixed with 'v').
-    Version-like tokens that are part of a skill name (e.g. HTML5, .NET 8) are
-    handled correctly because the regex requires a space before the version.
-    """
-    match = _VERSION_RE.match(text.strip())
-    if match:
-        return match.group("skill").strip(), match.group("version")
-    return text.strip(), None
