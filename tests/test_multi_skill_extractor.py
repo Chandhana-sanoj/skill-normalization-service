@@ -75,3 +75,27 @@ def test_short_items_in_a_list_are_kept(extractor):
     assert extractor.extract("Python (Machine Learning, qp)") == ["Python", "Machine Learning", "qp"]
 def test_version_list_in_parentheses_stays_with_skill(extractor):
     assert extractor.extract("Python (2+, 9, 11)") == ["Python 2+, 9, 11"]
+def test_short_alias_with_version_alone_is_accepted(extractor):
+    assert extractor.extract("py 3.1") == ["py 3.1"]
+
+
+def test_short_alias_with_version_and_context_is_accepted(extractor):
+    assert extractor.extract("experience in py 3.1") == ["py 3.1"]
+
+
+def test_short_alias_without_version_still_requires_context(extractor):
+    assert extractor.extract("py") == ["py"]
+
+
+def test_ordinary_go_sentence_is_not_extracted_with_version_rule(extractor):
+    assert extractor.extract("I want to go to the market") == [
+        "I want to go to the market"
+    ]
+
+
+def test_short_alias_with_version_carries_skill_id_and_version(extractor):
+    candidate = extractor.extract_detailed("py 3.1")[0]
+
+    assert candidate.text == "py 3.1"
+    assert candidate.skill_id == 1
+    assert candidate.version == "3.1"

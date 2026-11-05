@@ -169,11 +169,27 @@ class MultiSkillExtractor:
         return left_ok and right_ok
 
     def _ambiguous_rejected(self, keys, start, end, hit_count):
-        """An ambiguous name needs a second match and connector/filler/edge neighbours."""
+        """An ambiguous name needs context, unless followed by a version."""
         phrase = " ".join(keys[start:end])
+
         if not self._is_ambiguous(phrase):
             return False
-        return not (hit_count >= 2 and self._bounded(keys, start, end))
+
+        # A version immediately after a uniquely matched catalogue alias
+        # is strong context that the short token is being used as a skill.
+        # Example: "py 3.1"
+        has_version = (
+            end < len(keys)
+            and bool(VERSION_RE.match(keys[end]))
+        )
+
+        if has_version and self._bounded(keys, start, end):
+            return False
+
+        return not (
+            hit_count >= 2
+            and self._bounded(keys, start, end)
+        )
 
     # ---------- one segment ----------
     def _whole_match(self, seg):
