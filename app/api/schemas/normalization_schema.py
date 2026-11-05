@@ -17,6 +17,7 @@ class NormalizationResponse(BaseModel):
     description: str | None
     category: str | None
     status: str
+    aliases: list[str] = Field(default_factory=list)
 
 
 class MultiNormalizationRequest(BaseModel):

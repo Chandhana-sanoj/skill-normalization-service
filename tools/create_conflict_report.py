@@ -8,7 +8,7 @@ from app.services.alias_matcher import AliasMatcher
 
 
 def main():
-    alias_map, canonical_map, _, _ = CanonicalSkillRepository().load_catalogue()
+    alias_map, canonical_map, _, _, _ = CanonicalSkillRepository().load_catalogue()
     matcher = AliasMatcher(alias_map=alias_map, canonical_map=canonical_map)
 
     test_inputs = [

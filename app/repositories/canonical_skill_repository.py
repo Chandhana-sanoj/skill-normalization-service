@@ -21,14 +21,17 @@ class CanonicalSkillRepository:
         dict[int, str],
         dict[int, str],
         dict[int, str],
+        dict[int, list[str]],
     ]:
-        """Load alias_map, canonical_map, description_map, and category_map from PostgreSQL.
+        """Load alias_map, canonical_map, description_map, category_map, and
+        aliases_by_canonical_id from PostgreSQL.
 
         Returns:
-            alias_map:       normalized alias -> set of canonical IDs
-            canonical_map:   canonical ID -> canonical name
-            description_map: canonical ID -> description
-            category_map:    canonical ID -> category
+            alias_map:              normalized alias -> set of canonical IDs
+            canonical_map:          canonical ID -> canonical name
+            description_map:        canonical ID -> description
+            category_map:           canonical ID -> category
+            aliases_by_canonical:   canonical ID -> list of raw alias display names
 
         Raises:
             RuntimeError: when the database cannot be reached.
@@ -37,6 +40,7 @@ class CanonicalSkillRepository:
         canonical_map: dict[int, str] = {}
         description_map: dict[int, str] = {}
         category_map: dict[int, str] = {}
+        aliases_by_canonical: dict[int, list[str]] = defaultdict(list)
 
         try:
             with psycopg.connect(**self.db_config) as conn:
@@ -71,10 +75,16 @@ class CanonicalSkillRepository:
                     """)
 
                     for alias, canonical_id in cur.fetchall():
+                        canonical_id_int = int(canonical_id)
                         alias_key = normalize_lookup_key(alias)
 
                         if alias_key:
-                            alias_map[alias_key].add(int(canonical_id))
+                            alias_map[alias_key].add(canonical_id_int)
+
+                        # Store the raw display form for the UI (deduplicated per skill).
+                        alias_display = alias.strip() if alias else None
+                        if alias_display and alias_display not in aliases_by_canonical[canonical_id_int]:
+                            aliases_by_canonical[canonical_id_int].append(alias_display)
 
         except psycopg.OperationalError as exc:
             raise RuntimeError(
@@ -86,6 +96,7 @@ class CanonicalSkillRepository:
             canonical_map,
             description_map,
             category_map,
+            dict(aliases_by_canonical),
         )
 
     def get_category_by_id(self, canonical_id: int) -> str | None:
@@ -102,3 +113,18 @@ class CanonicalSkillRepository:
                 row = cur.fetchone()
 
         return row[0] if row else None
+
+    def get_aliases_by_canonical_name(self, canonical_name: str) -> list[str]:
+        """Return raw alias display names for the given canonical skill name."""
+        query = """
+            SELECT sa.alias
+            FROM skill_alias sa
+            JOIN canonical_skill cs ON sa.canonical_id = cs.id
+            WHERE cs.name = %s
+            ORDER BY sa.id;
+        """
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (canonical_name,))
+                rows = cur.fetchall()
+        return [row[0].strip() for row in rows if row[0] and row[0].strip()]

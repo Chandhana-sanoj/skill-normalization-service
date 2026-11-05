@@ -1,6 +1,6 @@
 // src/App.jsx
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import "./App.css";
 
 // Backend URL can be overridden in .env with VITE_API_BASE_URL.
@@ -74,6 +74,87 @@ function SearchBar({ id, value, onChange, placeholder, label }) {
         <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
       </svg>
       <input id={id} type="search" className="toolbar-input" placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} aria-label={label} />
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ALIAS POPOVER COMPONENT
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * AliasPopover — displays a "View Aliases" button that opens a compact popover
+ * listing all aliases for a canonical skill as individual chip tags.
+ *
+ * Props:
+ *   aliases  {string[]}  — list of alias display names from the API
+ *   skillName {string}   — the canonical skill name (used in aria-label)
+ */
+function AliasPopover({ aliases, skillName }) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef(null);
+
+  // Close popover when clicking outside the container.
+  useEffect(() => {
+    if (!open) return;
+    function handleOutside(e) {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, [open]);
+
+  // Close popover on Escape key.
+  useEffect(() => {
+    if (!open) return;
+    function handleKey(e) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [open]);
+
+  const count = Array.isArray(aliases) ? aliases.length : 0;
+
+  return (
+    <div className="alias-popover-container" ref={containerRef}>
+      <button
+        className="alias-view-btn"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label={`View aliases for ${skillName}`}
+        title={count === 0 ? "No aliases" : `${count} alias${count !== 1 ? "es" : ""}`}
+      >
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="9" cy="9" r="7"/><path d="M21 21l-4.35-4.35"/>
+        </svg>
+        {count > 0 ? `${count} alias${count !== 1 ? "es" : ""}` : "No aliases"}
+      </button>
+
+      {open && (
+        <div className="alias-popover" role="dialog" aria-label={`Aliases for ${skillName}`}>
+          <div className="alias-popover-header">
+            <span className="alias-popover-title">
+              Aliases
+              <span className="alias-popover-count">{count}</span>
+            </span>
+            <button className="alias-popover-close" onClick={() => setOpen(false)} aria-label="Close aliases">✕</button>
+          </div>
+          <div className="alias-popover-body">
+            {count === 0 ? (
+              <p className="alias-popover-empty">No aliases registered for this skill.</p>
+            ) : (
+              <div className="alias-chip-list">
+                {aliases.map((alias, i) => (
+                  <span key={i} className="alias-chip">{alias}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -395,13 +476,16 @@ function CatalogPage({ session }) {
             : (
               <div className="table-wrapper">
                 <table className="data-table" aria-label="Skill catalog">
-                  <thead><tr><th scope="col">Normalized Skill</th><th scope="col">Category</th><th scope="col">Description</th></tr></thead>
+                  <thead><tr><th scope="col">Normalized Skill</th><th scope="col">Category</th><th scope="col">Description</th><th scope="col">Aliases</th></tr></thead>
                   <tbody>
                     {items.map((item) => (
                       <tr key={item.id}>
                         <td className="cell-skill">{item.normalizedSkill}</td>
                         <td><span className="category-tag">{item.category}</span></td>
                         <td className="cell-description">{item.description}</td>
+                        <td className="cell-aliases">
+                          <AliasPopover aliases={item.aliases ?? []} skillName={item.normalizedSkill} />
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1159,7 +1243,14 @@ function OutputPage({ session, outputCache, setOutputCache }) {
                     {items.map((item) => (
                       <tr key={item.id}>
                         <td className="cell-raw">{item.inputSkill ?? <span className="cell-empty">—</span>}</td>
-                        <td className="cell-skill">{item.normalizedSkill ?? <span className="cell-empty">—</span>}</td>
+                        <td className="cell-skill">
+                          {item.normalizedSkill ?? <span className="cell-empty">—</span>}
+                          {item.status === "matched" && item.normalizedSkill && (
+                            <div className="cell-skill-alias">
+                              <AliasPopover aliases={item.aliases ?? []} skillName={item.normalizedSkill} />
+                            </div>
+                          )}
+                        </td>
                         <td className="cell-version">{item.version ?? <span className="cell-empty">—</span>}</td>
                         <td>{item.category ? <span className="category-tag">{item.category}</span> : <span className="cell-empty">—</span>}</td>
                         <td className="cell-description">{item.description || <span className="cell-empty">—</span>}</td>
@@ -1320,7 +1411,14 @@ function NormalizeSkillPage({ token }) {
                 <dt>Input Skill</dt>
                 <dd className="cell-raw">{item.input || skill}</dd>
                 <dt>Normalized Skill</dt>
-                <dd className="cell-skill">{item.skill || "Unresolved"}</dd>
+                <dd className="cell-skill">
+                  {item.skill || "Unresolved"}
+                  {item.status === "matched" && item.skill && (
+                    <span className="normalize-alias-inline">
+                      <AliasPopover aliases={item.aliases ?? []} skillName={item.skill} />
+                    </span>
+                  )}
+                </dd>
                 {item.version && <><dt>Version</dt><dd className="cell-version">{item.version}</dd></>}
                 {item.category && <><dt>Category</dt><dd><span className="category-tag">{item.category}</span></dd></>}
                 {item.description && <><dt>Description</dt><dd className="cell-description">{item.description}</dd></>}

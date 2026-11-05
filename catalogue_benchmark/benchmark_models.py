@@ -185,7 +185,7 @@ TEST_CASES = [
 
 def load_canonical_names():
     """Load canonical skill names from PostgreSQL."""
-    _, canonical_map, _, _ = CanonicalSkillRepository().load_catalogue()
+    _, canonical_map, _, _, _ = CanonicalSkillRepository().load_catalogue()
 
     canonical_names = list(dict.fromkeys(
         name.strip()

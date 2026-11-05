@@ -58,9 +58,7 @@ def load_catalogue_from_postgres():
     """Load canonical skills and descriptions from PostgreSQL."""
     print("Loading actual skill catalogue from PostgreSQL...")
 
-    _, canonical_map, description_map, _ = (
-        CanonicalSkillRepository().load_catalogue()
-    )
+    _, canonical_map, description_map, _, _ = CanonicalSkillRepository().load_catalogue()
 
     rows = [
         {

@@ -29,7 +29,7 @@ def test_repository_loads_all_four_catalogue_maps(monkeypatch):
     monkeypatch.setattr("app.repositories.canonical_skill_repository.psycopg.connect",
                         lambda **kwargs: connection)
 
-    alias_map, canonical_map, description_map, category_map = (
+    alias_map, canonical_map, description_map, category_map, aliases_by_canonical = (
         CanonicalSkillRepository().load_catalogue()
     )
 
@@ -63,5 +63,27 @@ def test_alias_conflicts_are_retained_for_explicit_handling(monkeypatch):
         lambda **kwargs: connection,
     )
 
-    alias_map, _, _, _ = CanonicalSkillRepository().load_catalogue()
+    alias_map, _, _, _, _ = CanonicalSkillRepository().load_catalogue()
     assert alias_map["shared"] == {1, 2}
+
+
+def test_aliases_by_canonical_groups_aliases_under_correct_skill_id(monkeypatch):
+    canonical_rows = [
+        (1, "Python", "Programming language", "Programming"),
+        (2, "React", None, None),
+    ]
+    alias_rows = [
+        ("Py", 1),
+        ("Python 3", 1),
+        ("ReactJS", 2),
+    ]
+    connection, _ = make_connection(canonical_rows, alias_rows)
+    monkeypatch.setattr(
+        "app.repositories.canonical_skill_repository.psycopg.connect",
+        lambda **kwargs: connection,
+    )
+
+    _, _, _, _, aliases_by_canonical = CanonicalSkillRepository().load_catalogue()
+
+    assert set(aliases_by_canonical[1]) == {"Py", "Python 3"}
+    assert aliases_by_canonical[2] == ["ReactJS"]

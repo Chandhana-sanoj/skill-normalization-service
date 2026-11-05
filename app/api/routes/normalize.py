@@ -25,6 +25,7 @@ def normalize_skill(
 ):
     """Extract skills from the input, then normalize each candidate."""
     app_state = request.app.state
+    aliases_by_canonical = getattr(app_state, "aliases_by_canonical", {})
 
     try:
         extractor = MultiSkillExtractor(
@@ -50,6 +51,20 @@ def normalize_skill(
             )
             for candidate in candidates
         ]
+
+        # Enrich each matched result with aliases from the in-memory map.
+        # Unresolved skills get an empty aliases list (no confirmed match).
+        for result in results:
+            if result.get("status") == "matched" and result.get("skill"):
+                canonical_name = result["skill"]
+                # Resolve canonical ID from canonical_map to look up aliases.
+                canonical_id = next(
+                    (cid for cid, name in app_state.canonical_map.items() if name == canonical_name),
+                    None,
+                )
+                result["aliases"] = aliases_by_canonical.get(canonical_id, []) if canonical_id is not None else []
+            else:
+                result["aliases"] = []
 
         # Persist normalization results to history (best-effort; never raises).
         try:

@@ -1527,3 +1527,179 @@ input {
   align-items: center;
   min-width: 100px;
 }
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   ALIAS POPOVER & CHIPS
+   Used in Catalog table (Aliases column) and Normalization Output / Normalize
+   Skill result cards.
+══════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Cell containers ─────────────────────────────────────────────────────── */
+
+/* Catalog "Aliases" column cell — keeps the popover anchored */
+.cell-aliases {
+  position: relative;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+/* Wrapper below the canonical skill name in the Output table */
+.cell-skill-alias {
+  margin-top: 5px;
+}
+
+/* Inline wrapper next to skill name in the Normalize result card */
+.normalize-alias-inline {
+  display: inline-block;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+/* ── View Aliases trigger button ─────────────────────────────────────────── */
+
+.alias-view-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border-soft);
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--color-muted);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.alias-view-btn:hover {
+  background: var(--color-accent-bg);
+  border-color: var(--color-accent);
+  color: var(--color-accent-dark);
+}
+
+.alias-view-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* ── Popover container (positioned) ─────────────────────────────────────── */
+
+.alias-popover-container {
+  position: relative;
+  display: inline-block;
+}
+
+.alias-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 400;
+  min-width: 240px;
+  max-width: 340px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgb(28 27 25 / 10%), 0 2px 6px rgb(28 27 25 / 6%);
+  /* Prevent the popover clipping at the right edge on narrow viewports */
+  max-width: min(340px, calc(100vw - 32px));
+}
+
+/* Flip popover to the right when it would overflow to the left */
+@media (max-width: 540px) {
+  .alias-popover {
+    left: auto;
+    right: 0;
+  }
+}
+
+/* ── Popover header ──────────────────────────────────────────────────────── */
+
+.alias-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.alias-popover-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.alias-popover-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  background: var(--color-accent-bg);
+  color: var(--color-accent-dark);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.alias-popover-close {
+  padding: 2px 6px;
+  background: none;
+  border: none;
+  font-size: 13px;
+  color: var(--color-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+  line-height: 1;
+}
+
+.alias-popover-close:hover {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+/* ── Popover body ────────────────────────────────────────────────────────── */
+
+.alias-popover-body {
+  padding: 10px 14px 12px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.alias-popover-empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-muted);
+  font-style: italic;
+}
+
+/* ── Alias chip list ─────────────────────────────────────────────────────── */
+
+.alias-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.alias-chip {
+  display: inline-block;
+  padding: 3px 10px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border-soft);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text);
+  line-height: 1.4;
+  white-space: nowrap;
+}

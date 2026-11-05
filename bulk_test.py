@@ -29,6 +29,7 @@ catalogue_repository = CanonicalSkillRepository()
     canonical_map,
     description_map,
     category_map,
+    _,
 ) = catalogue_repository.load_catalogue()
 
 multi_skill_extractor = MultiSkillExtractor(

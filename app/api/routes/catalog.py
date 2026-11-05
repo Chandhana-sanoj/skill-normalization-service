@@ -23,6 +23,7 @@ def get_catalog(
     canonical_map = request.app.state.canonical_map
     description_map = request.app.state.description_map
     category_map = request.app.state.category_map
+    aliases_by_canonical = getattr(request.app.state, "aliases_by_canonical", {})
 
     # Build the full list of canonical skills.
     all_skills = [
@@ -31,6 +32,7 @@ def get_catalog(
             "normalizedSkill": skill_name,
             "description": description_map.get(skill_id, "") or "",
             "category": category_map.get(skill_id, "") or "",
+            "aliases": aliases_by_canonical.get(skill_id, []),
         }
         for skill_id, skill_name in canonical_map.items()
     ]

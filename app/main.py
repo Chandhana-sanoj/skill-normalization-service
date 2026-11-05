@@ -31,6 +31,7 @@ async def lifespan(app: FastAPI):
         canonical_map,
         description_map,
         category_map,
+        aliases_by_canonical,
     ) = catalogue_repository.load_catalogue()
 
     vector_searcher = VectorSearcher()
@@ -39,6 +40,7 @@ async def lifespan(app: FastAPI):
     app.state.canonical_map = canonical_map
     app.state.description_map = description_map
     app.state.category_map = category_map
+    app.state.aliases_by_canonical = aliases_by_canonical
     app.state.vector_searcher = vector_searcher
 
     yield

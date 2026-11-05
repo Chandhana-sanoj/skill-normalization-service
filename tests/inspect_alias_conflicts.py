@@ -3,7 +3,7 @@
 from app.repositories.canonical_skill_repository import CanonicalSkillRepository
 
 
-alias_map, canonical_map, _, _ = CanonicalSkillRepository().load_catalogue()
+alias_map, canonical_map, _, _, _ = CanonicalSkillRepository().load_catalogue()
 conflicts = {
     alias: sorted(ids)
     for alias, ids in alias_map.items()
