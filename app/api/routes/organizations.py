@@ -1,4 +1,4 @@
-"""API routes for managing organization-specific skills."""
+﻿"""API routes for managing organization-specific skills."""
 
 import psycopg
 
@@ -25,7 +25,7 @@ router = APIRouter(
 )
 
 
-# ── Request schemas ───────────────────────────────────────────────────────────
+# â”€â”€ Request schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class OrganizationSkillRequest(BaseModel):
     raw_skill:        str        = Field(..., min_length=1, max_length=300)
@@ -41,7 +41,7 @@ class PromoteUnresolvedRequest(BaseModel):
     description:      str | None = Field(default=None, max_length=2000)
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _get_categories(request: Request) -> list[str]:
     """Return sorted distinct categories from the in-memory catalogue."""
@@ -75,7 +75,7 @@ def _skill_response(skill_id: int, organization_id: int, payload, message: str) 
     }
 
 
-# ── Catalogue categories (for form dropdown) ──────────────────────────────────
+# â”€â”€ Catalogue categories (for form dropdown) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.get("/me/categories")
 def get_org_skill_categories(
@@ -90,7 +90,7 @@ def get_org_skill_categories(
     return {"categories": _get_categories(request)}
 
 
-# ── List skills ───────────────────────────────────────────────────────────────
+# â”€â”€ List skills â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.get("/me/skills")
 def get_my_organization_skills(
@@ -105,12 +105,20 @@ def get_my_organization_skills(
     if not OrganizationRepository().exists(organization_id):
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    items, total = OrganizationSkillRepository().list_by_organization(
+    repo = OrganizationSkillRepository()
+    items, total = repo.list_by_organization(
         organization_id=organization_id,
         search=q,
         page=page,
         limit=limit,
     )
+
+    # Attach organization-specific aliases to each skill (one batch query).
+    if items:
+        skill_ids = [item["id"] for item in items]
+        aliases_map = repo.get_aliases_for_skills(organization_id, skill_ids)
+        for item in items:
+            item["aliases"] = aliases_map.get(item["id"], [])
 
     return {
         "organization_id": organization_id,
@@ -121,7 +129,7 @@ def get_my_organization_skills(
     }
 
 
-# ── Create skill ──────────────────────────────────────────────────────────────
+# â”€â”€ Create skill â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.post("/me/skills", status_code=201)
 def create_organization_skill(
@@ -158,7 +166,7 @@ def create_organization_skill(
     return _skill_response(skill_id, organization_id, payload, "Skill created successfully")
 
 
-# ── Update skill ──────────────────────────────────────────────────────────────
+# â”€â”€ Update skill â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.put("/me/skills/{skill_id}")
 def update_organization_skill(
@@ -202,7 +210,7 @@ def update_organization_skill(
     return _skill_response(skill_id, organization_id, payload, "Skill updated successfully")
 
 
-# ── Delete skill ──────────────────────────────────────────────────────────────
+# â”€â”€ Delete skill â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.delete("/me/skills/{skill_id}", status_code=204)
 def delete_organization_skill(
@@ -223,7 +231,7 @@ def delete_organization_skill(
     return Response(status_code=204)
 
 
-# ── Promote unresolved → org skill (single transaction) ──────────────────────
+# â”€â”€ Promote unresolved â†’ org skill (single transaction) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.post("/me/unresolved/{unresolved_id}/promote", status_code=201)
 def promote_unresolved_to_org_skill(
@@ -260,7 +268,7 @@ def promote_unresolved_to_org_skill(
 
     embedding = _make_embedding(request, normalized_skill)
 
-    # ── Single transaction ────────────────────────────────────────────────────
+    # â”€â”€ Single transaction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     with psycopg.connect(**DB_CONFIG) as conn:
 
         # 1. Verify the unresolved record belongs to this org.
@@ -294,7 +302,7 @@ def promote_unresolved_to_org_skill(
             )
 
         conn.commit()
-    # ── End transaction ───────────────────────────────────────────────────────
+    # â”€â”€ End transaction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     return {
         "id":              skill_id,

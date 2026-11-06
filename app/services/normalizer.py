@@ -2,6 +2,12 @@
 
 import re
 
+import logging
+
+from app.services.groq_skill_suggester import GroqSkillSuggester
+
+_logger = logging.getLogger(__name__)
+
 from app.services.preprocessing import normalize_input
 from app.services.alias_matcher import AliasMatcher
 from app.services.embedding_matcher import EmbeddingMatcher
@@ -145,11 +151,21 @@ class SkillNormalizer:
                 "matched",
             )
 
-        # Semantic fallback uses the base skill name, never the version suffix.
-        embedding_result = self.embedding_matcher.match(skill_name)
+                 # Retrieve the top embedding candidates once.
+        embedding_candidates = self.embedding_matcher.get_candidates(
+            skill_name,
+            top_k=3,
+        )
 
-        if embedding_result is not None:
-            canonical_name = embedding_result["name"]
+        # Preserve the existing embedding threshold behaviour.
+        if (
+            embedding_candidates
+            and embedding_candidates[0]["similarity"]
+            >= self.embedding_matcher.threshold
+        ):
+            best_match = embedding_candidates[0]
+            canonical_name = best_match["name"]
+
             return self._build_result(
                 cleaned_input,
                 canonical_name,
@@ -159,11 +175,32 @@ class SkillNormalizer:
                 "matched",
             )
 
-        # No exact or semantic match: store the original candidate as unresolved.
-        self.unresolved_repository.save(
+        # No exact or semantic match: save as unresolved.
+        unresolved_id = self.unresolved_repository.save(
             organization_id=self.organization_id,
             input_text=cleaned_input,
         )
+
+        # Generate and persist an LLM suggestion.
+        try:
+            suggester = GroqSkillSuggester()
+
+            suggestion = suggester.suggest(
+                raw_skill=skill_name,
+                candidates=embedding_candidates,
+            )
+
+            self.unresolved_repository.save_suggestion(
+                organization_id=self.organization_id,
+                unresolved_id=unresolved_id,
+                suggestion=suggestion,
+            )
+
+        except Exception:
+            _logger.exception(
+                "Failed to generate LLM suggestion for unresolved skill: %s",
+                cleaned_input,
+            )
 
         return self._build_result(
             cleaned_input,

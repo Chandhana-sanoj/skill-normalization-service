@@ -1598,14 +1598,13 @@ input {
   top: calc(100% + 6px);
   left: 0;
   z-index: 400;
-  min-width: 240px;
-  max-width: 340px;
+  min-width: 360px;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: 10px;
   box-shadow: 0 8px 24px rgb(28 27 25 / 10%), 0 2px 6px rgb(28 27 25 / 6%);
-  /* Prevent the popover clipping at the right edge on narrow viewports */
-  max-width: min(340px, calc(100vw - 32px));
+  /* Never overflow the viewport horizontally */
+  max-width: min(520px, calc(100vw - 32px));
 }
 
 /* Flip popover to the right when it would overflow to the left */
@@ -1671,8 +1670,8 @@ input {
 /* ── Popover body ────────────────────────────────────────────────────────── */
 
 .alias-popover-body {
-  padding: 10px 14px 12px;
-  max-height: 220px;
+  padding: 14px 18px 16px;
+  max-height: 260px;
   overflow-y: auto;
 }
 
@@ -1701,5 +1700,42 @@ input {
   font-weight: 500;
   color: var(--color-text);
   line-height: 1.4;
-  white-space: nowrap;
+  word-break: break-word;
+}
+
+/* ── Unresolved Skills — new Groq workflow additions ──────────────────────── */
+
+/* Success banner */
+.state-success {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 10px 16px;
+  background: #f0faf3;
+  border: 1px solid #a8d5b5;
+  border-radius: 8px;
+  color: #1e6b3a;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+/* Description cell text — truncate long descriptions */
+.cell-desc-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--color-muted);
+  max-width: 220px;
+}
+
+/* Inline alias chip list (without popover) in table cells */
+.alias-chip-list--inline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex-wrap: wrap;
+  max-width: 200px;
 }

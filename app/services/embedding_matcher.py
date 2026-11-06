@@ -10,23 +10,33 @@ class EmbeddingMatcher:
         self.organization_id = organization_id
         self.threshold = threshold
 
-    def match(self, text: str) -> dict | None:
+    def get_candidates(self, text: str, top_k: int = 3) -> list[dict]:
+        """Return the top similar skills with their similarity scores."""
         results = self.vector_searcher.search(
             text,
             organization_id=self.organization_id,
-            top_k=3,
+            top_k=top_k,
         )
 
-        if not results:
+        return [
+            {
+                "id": skill_id,
+                "name": skill_name,
+                "similarity": float(similarity),
+            }
+            for skill_id, skill_name, similarity in results
+        ]
+
+    def match(self, text: str) -> dict | None:
+        """Return the best candidate only if it meets the threshold."""
+        candidates = self.get_candidates(text)
+
+        if not candidates:
             return None
 
-        best_id, best_name, best_similarity = results[0]
+        best_match = candidates[0]
 
-        if best_similarity < self.threshold:
+        if best_match["similarity"] < self.threshold:
             return None
 
-        return {
-            "id": best_id,
-            "name": best_name,
-            "similarity": best_similarity,
-        }
+        return best_match

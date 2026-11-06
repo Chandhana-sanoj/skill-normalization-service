@@ -1,5 +1,5 @@
 """Repository for storing and retrieving unresolved skills."""
-
+from psycopg.types.json import Jsonb
 import psycopg
 from app.core.config import DB_CONFIG
 
@@ -53,7 +53,7 @@ class UnresolvedSkillRepository:
 
         offset = (page - 1) * limit
         list_query = f"""
-            SELECT id, input
+            SELECT id, input, suggestion
             FROM unresolved_skill
             {base_where}
             ORDER BY id DESC
@@ -72,9 +72,7 @@ class UnresolvedSkillRepository:
             {
                 "id": row[0],
                 "rawSkill": row[1],
-                # No suggestion or confidence stored — the pipeline never
-                # persists its best-guess for unresolved skills.
-                "suggestion": None,
+                "suggestion": row[2],
             }
             for row in rows
         ]
@@ -174,3 +172,23 @@ class UnresolvedSkillRepository:
         if row is None:
             return None
         return {"id": row[0], "rawSkill": row[1]}
+    def save_suggestion(
+        self,
+        organization_id: int,
+        unresolved_id: int,
+        suggestion: dict,
+    ) -> bool:
+        query = """
+            UPDATE unresolved_skill
+            SET suggestion = %s
+            WHERE id = %s
+            AND organization_id = %s;
+        """
+
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    query,
+                    (Jsonb(suggestion), unresolved_id, organization_id),
+                )
+                return cur.rowcount > 0

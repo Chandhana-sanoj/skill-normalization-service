@@ -127,10 +127,12 @@ function AliasPopover({ aliases, skillName }) {
         aria-label={`View aliases for ${skillName}`}
         title={count === 0 ? "No aliases" : `${count} alias${count !== 1 ? "es" : ""}`}
       >
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <circle cx="9" cy="9" r="7"/><path d="M21 21l-4.35-4.35"/>
+        {/* Eye icon — communicates "view" */}
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+          <circle cx="12" cy="12" r="3"/>
         </svg>
-        {count > 0 ? `${count} alias${count !== 1 ? "es" : ""}` : "No aliases"}
+        View Aliases
       </button>
 
       {open && (
@@ -759,7 +761,7 @@ function OrgSkillsPage({ session }) {
             : (
               <div className="table-wrapper">
                 <table className="data-table" aria-label="Organisation skills">
-                  <thead><tr><th scope="col">Raw Skill</th><th scope="col">Normalized Skill</th><th scope="col">Category</th><th scope="col">Description</th>{isAdmin && <th scope="col"><span className="sr-only">Actions</span></th>}</tr></thead>
+                  <thead><tr><th scope="col">Raw Skill</th><th scope="col">Normalized Skill</th><th scope="col">Category</th><th scope="col">Description</th><th scope="col">Aliases</th>{isAdmin && <th scope="col"><span className="sr-only">Actions</span></th>}</tr></thead>
                   <tbody>
                     {items.map((item) => (
                       <tr key={item.id}>
@@ -767,6 +769,9 @@ function OrgSkillsPage({ session }) {
                         <td className="cell-skill">{item.normalizedSkill || <span className="cell-empty">—</span>}</td>
                         <td>{item.category ? <span className="category-tag">{item.category}</span> : <span className="cell-empty">—</span>}</td>
                         <td className="cell-description">{item.description || <span className="cell-empty">—</span>}</td>
+                        <td className="cell-aliases">
+                          <AliasPopover aliases={item.aliases ?? []} skillName={item.normalizedSkill || item.rawSkill} />
+                        </td>
                         {isAdmin && (
                           <td className="cell-actions">
                             <button className="action-btn" onClick={() => openEdit(item)} aria-label={`Edit ${item.rawSkill}`}>Edit</button>
@@ -830,6 +835,13 @@ async function deleteUnresolvedSkill({ id, token }) {
   return apiRequest(
     `/api/v1/organizations/me/unresolved/${id}`,
     { method: "DELETE", token }
+  );
+}
+
+async function approveUnresolvedSkill({ id, payload, token }) {
+  return apiRequest(
+    `/api/v1/organizations/me/unresolved/${id}/approve`,
+    { method: "POST", token, body: JSON.stringify(payload) }
   );
 }
 
@@ -981,6 +993,137 @@ function AddToOrgSkillsModal({ item, onSave, onClose, saving, saveError, token }
   );
 }
 
+// ── Edit-and-approve modal ────────────────────────────────────────────────────
+/**
+ * EditAndApproveModal — lets the admin review and edit a Groq-generated
+ * suggestion before approving it and promoting it to an organisation skill.
+ */
+function EditAndApproveModal({ item, onApprove, onClose, saving, saveError }) {
+  const s = item.suggestion || {};
+  const initialName    = s.name        || s.normalizedSkill || "";
+  const initialDesc    = s.description || "";
+  const initialCat     = s.category    || "";
+  const initialAliases = Array.isArray(s.aliases) ? s.aliases.join(", ") : "";
+
+  const [form, setForm] = useState({
+    name:        initialName,
+    description: initialDesc,
+    category:    initialCat,
+    aliasesText: initialAliases,
+  });
+  const [validationError, setValidationError] = useState(null);
+
+  function handleChange(e) {
+    setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
+  }
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    const name = form.name.trim();
+    if (!name) { setValidationError("Skill name is required."); return; }
+    setValidationError(null);
+    const aliases = form.aliasesText
+      .split(",")
+      .map((a) => a.trim())
+      .filter(Boolean);
+    onApprove({
+      id: item.id,
+      payload: {
+        name,
+        description: form.description.trim() || null,
+        category:    form.category.trim()    || null,
+        aliases,
+      },
+    });
+  }
+
+  function handleBackdropClick(e) {
+    if (e.target === e.currentTarget) onClose();
+  }
+
+  const displayError = validationError || saveError;
+
+  return (
+    <div className="modal-backdrop" onClick={handleBackdropClick} role="dialog" aria-modal="true" aria-label="Edit and approve skill suggestion">
+      <div className="modal-card modal-card--wide">
+        <div className="modal-header">
+          <h2 className="modal-title">Edit &amp; Approve Suggestion</h2>
+          <button className="modal-close" onClick={onClose} aria-label="Close">✕</button>
+        </div>
+        <div className="resolve-context">
+          <div className="resolve-context-row">
+            <span className="resolve-label">Original input</span>
+            <span className="resolve-value resolve-value--raw">{item.rawSkill}</span>
+          </div>
+        </div>
+        {displayError && (
+          <div className="modal-error" role="alert">
+            <strong>Could not approve.</strong> {displayError}
+          </div>
+        )}
+        <form className="modal-form" onSubmit={handleSubmit}>
+          <div className="form-field">
+            <label htmlFor="eam-name">Skill Name <span className="required">*</span></label>
+            <input
+              id="eam-name"
+              name="name"
+              type="text"
+              value={form.name}
+              onChange={handleChange}
+              placeholder="Canonical skill name"
+              required
+              autoFocus // eslint-disable-line jsx-a11y/no-autofocus
+            />
+            <span className="field-hint">The standardised canonical name for this skill.</span>
+          </div>
+          <div className="form-field">
+            <label htmlFor="eam-description">Description</label>
+            <textarea
+              id="eam-description"
+              name="description"
+              rows={2}
+              value={form.description}
+              onChange={handleChange}
+              placeholder="Brief description of the skill…"
+            />
+          </div>
+          <div className="form-field">
+            <label htmlFor="eam-category">Category</label>
+            <input
+              id="eam-category"
+              name="category"
+              type="text"
+              value={form.category}
+              onChange={handleChange}
+              placeholder="e.g. Data Engineering"
+            />
+          </div>
+          <div className="form-field">
+            <label htmlFor="eam-aliases">Aliases</label>
+            <input
+              id="eam-aliases"
+              name="aliasesText"
+              type="text"
+              value={form.aliasesText}
+              onChange={handleChange}
+              placeholder="Comma-separated aliases, e.g. Py, Python 3, CPython"
+            />
+            <span className="field-hint">Separate multiple aliases with a comma.</span>
+          </div>
+          <div className="modal-actions">
+            <button type="button" className="btn-secondary" onClick={onClose} disabled={saving}>
+              Cancel
+            </button>
+            <button type="submit" className="btn-primary btn-resolve" disabled={saving || !form.name.trim()}>
+              {saving ? "Approving…" : "Save & Approve"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ── Access denied panel ───────────────────────────────────────────────────────
 function AccessDeniedPage() {
   return (
@@ -1009,55 +1152,131 @@ function UnresolvedAdminPage({ session }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [debouncedSearch, setDebouncedSearch] = useState(search);
-  const [editTarget, setEditTarget]       = useState(null);
-  const [editing, setEditing]             = useState(false);
-  const [editError, setEditError]         = useState(null);
-  const [promoteTarget, setPromoteTarget] = useState(null);
-  const [promoting, setPromoting]         = useState(false);
-  const [promoteError, setPromoteError]   = useState(null);
+
+  // Inline approve (one-click)
+  const [approveTarget, setApproveTarget]   = useState(null);
+  const [approving, setApproving]           = useState(false);
+  const [approveError, setApproveError]     = useState(null);
+
+  // Edit-then-approve modal
+  const [editApproveTarget, setEditApproveTarget] = useState(null);
+  const [editApproving, setEditApproving]         = useState(false);
+  const [editApproveError, setEditApproveError]   = useState(null);
+
+  // Success banner
+  const [successMsg, setSuccessMsg] = useState(null);
 
   useEffect(() => { const t = setTimeout(() => setDebouncedSearch(search), 400); return () => clearTimeout(t); }, [search]);
   useEffect(() => { setPage(1); }, [debouncedSearch]);
 
+  // Auto-dismiss success banner after 3.5 s
+  useEffect(() => {
+    if (!successMsg) return;
+    const t = setTimeout(() => setSuccessMsg(null), 3500);
+    return () => clearTimeout(t);
+  }, [successMsg]);
+
   const load = useCallback(async () => {
     setLoading(true); setError(null);
-    try { const data = await fetchUnresolvedSkills({ search: debouncedSearch, page, token: session.token }); setItems(data.items ?? []); setTotal(data.total ?? 0); }
-    catch (err) { setError(err.message || "An unexpected error occurred."); setItems([]); setTotal(0); }
-    finally { setLoading(false); }
-  }, [session.orgId, debouncedSearch, page]);
+    try {
+      const data = await fetchUnresolvedSkills({ search: debouncedSearch, page, token: session.token });
+      setItems(data.items ?? []);
+      setTotal(data.total ?? 0);
+    } catch (err) {
+      setError(err.message || "An unexpected error occurred.");
+      setItems([]); setTotal(0);
+    } finally { setLoading(false); }
+  }, [session.orgId, debouncedSearch, page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load(); }, [load]);
 
-  async function handleEdit(payload) {
-    setEditing(true); setEditError(null);
-    try { await updateUnresolvedSkill({ id: payload.id, input: payload.input, token: session.token }); setEditTarget(null); load(); }
-    catch (err) { setEditError(err.message || "An unexpected error occurred."); }
-    finally { setEditing(false); }
-  }
-
-  async function handleDelete(item) {
-    if (!window.confirm("Delete this unresolved record permanently?")) return;
-    try { await deleteUnresolvedSkill({ id: item.id, token: session.token }); load(); }
-    catch (err) { alert(`Delete failed: ${err.message}`); }
-  }
-
-  async function handlePromote(payload) {
-    setPromoting(true); setPromoteError(null);
+  // ── One-click approve ────────────────────────────────────────────────────────
+  async function handleApprove(item) {
+    setApproveTarget(item); setApproving(true); setApproveError(null);
+    const s = item.suggestion || {};
+    const payload = {
+      name:        s.name        || s.normalizedSkill || "",
+      description: s.description ?? null,
+      category:    s.category    ?? null,
+      aliases:     Array.isArray(s.aliases) ? s.aliases : [],
+    };
     try {
-      await promoteUnresolved({ unresolvedId: payload.unresolvedId, skill: payload.skill, token: session.token });
-      setPromoteTarget(null);
+      await approveUnresolvedSkill({ id: item.id, payload, token: session.token });
+      setSuccessMsg(`"${payload.name}" approved and added to organisation skills.`);
       load();
+    } catch (err) {
+      setApproveError(err.message || "Approval failed.");
+    } finally {
+      setApproving(false);
+      setApproveTarget(null);
     }
-    catch (err) { setPromoteError(err.message || "An unexpected error occurred."); }
-    finally { setPromoting(false); }
+  }
+
+  // ── Edit-then-approve ────────────────────────────────────────────────────────
+  async function handleEditApprove({ id, payload }) {
+    setEditApproving(true); setEditApproveError(null);
+    try {
+      await approveUnresolvedSkill({ id, payload, token: session.token });
+      setEditApproveTarget(null);
+      setSuccessMsg(`"${payload.name}" approved and added to organisation skills.`);
+      load();
+    } catch (err) {
+      setEditApproveError(err.message || "Approval failed.");
+    } finally {
+      setEditApproving(false);
+    }
+  }
+
+  // ── Reject (delete) ──────────────────────────────────────────────────────────
+  async function handleReject(item) {
+    if (!window.confirm(`Reject and delete "${item.rawSkill}"? This cannot be undone.`)) return;
+    try {
+      await deleteUnresolvedSkill({ id: item.id, token: session.token });
+      load();
+    } catch (err) {
+      alert(`Reject failed: ${err.message}`);
+    }
   }
 
   return (
     <div className="page">
-      <div className="page-header"><div><h1 className="page-title">Unresolved Skills</h1><p className="page-subtitle">Skills from <strong>{session.orgName}</strong> that the pipeline could not confidently match.&ensp;{!loading && !error && <span>{total.toLocaleString()} pending</span>}</p></div></div>
-      <div className="toolbar"><SearchBar id="unresolved-search" value={search} onChange={setSearch} placeholder="Search unresolved skills…" label="Search unresolved skills" /></div>
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Unresolved Skills</h1>
+          <p className="page-subtitle">
+            Skills from <strong>{session.orgName}</strong> that the pipeline could not confidently match.&ensp;
+            {!loading && !error && <span>{total.toLocaleString()} pending</span>}
+          </p>
+        </div>
+      </div>
+
+      <div className="toolbar">
+        <SearchBar id="unresolved-search" value={search} onChange={setSearch} placeholder="Search unresolved skills…" label="Search unresolved skills" />
+      </div>
+
+      {/* Success banner */}
+      {successMsg && (
+        <div className="state-success" role="status" aria-live="polite">
+          ✓ {successMsg}
+        </div>
+      )}
+
+      {/* Inline approve error */}
+      {approveError && (
+        <div className="state-error" role="alert">
+          <strong>Approval failed.</strong> {approveError}
+          <button className="retry-btn" onClick={() => setApproveError(null)}>Dismiss</button>
+        </div>
+      )}
+
       {loading && <div className="state-loading" aria-live="polite"><span className="spinner" aria-hidden="true" />Loading unresolved skills…</div>}
-      {!loading && error && <div className="state-error" role="alert"><strong>Could not load unresolved skills.</strong><p>{error}</p><button className="retry-btn" onClick={load}>Try again</button></div>}
+      {!loading && error && (
+        <div className="state-error" role="alert">
+          <strong>Could not load unresolved skills.</strong><p>{error}</p>
+          <button className="retry-btn" onClick={load}>Try again</button>
+        </div>
+      )}
+
       {!loading && !error && (
         <>
           {items.length === 0
@@ -1065,21 +1284,83 @@ function UnresolvedAdminPage({ session }) {
             : (
               <div className="table-wrapper">
                 <table className="data-table" aria-label="Unresolved skills">
-                  <thead><tr><th scope="col">Raw Input</th><th scope="col">Suggested Match</th><th scope="col">Category</th><th scope="col">Confidence</th><th scope="col" className="th-actions">Actions</th></tr></thead>
+                  <thead>
+                    <tr>
+                      <th scope="col">Original Input</th>
+                      <th scope="col">Suggested Skill</th>
+                      <th scope="col">Description</th>
+                      <th scope="col">Category</th>
+                      <th scope="col">Aliases</th>
+                      <th scope="col" className="th-actions">Actions</th>
+                    </tr>
+                  </thead>
                   <tbody>
-                    {items.map((item) => (
-                      <tr key={item.id}>
-                        <td className="cell-raw">{item.rawSkill}</td>
-                        <td className="cell-skill">{item.suggestion?.normalizedSkill ?? <span className="cell-empty">No suggestion</span>}</td>
-                        <td>{item.suggestion?.category ? <span className="category-tag">{item.suggestion.category}</span> : <span className="cell-empty">—</span>}</td>
-                        <td>{item.suggestion?.confidence != null ? <ConfidencePill value={item.suggestion.confidence} /> : <span className="cell-empty">—</span>}</td>
-                        <td className="cell-actions">
-                          <button className="action-btn action-btn--resolve" onClick={() => { setPromoteTarget(item); setPromoteError(null); }} aria-label={`Add ${item.rawSkill} to organisation skills`}>Add to Org Skills</button>
-                          <button className="action-btn action-btn--edit" onClick={() => { setEditTarget(item); setEditError(null); }} aria-label={`Edit ${item.rawSkill}`}>Edit</button>
-                          <button className="action-btn action-btn--delete" onClick={() => handleDelete(item)} aria-label={`Delete ${item.rawSkill}`}>Delete</button>
-                        </td>
-                      </tr>
-                    ))}
+                    {items.map((item) => {
+                      const s = item.suggestion || {};
+                      const suggestedName = s.name || s.normalizedSkill;
+                      const hasSuggestion = Boolean(suggestedName);
+                      const isApprovingThis = approving && approveTarget?.id === item.id;
+                      const suggestionAliases = Array.isArray(s.aliases) ? s.aliases : [];
+
+                      return (
+                        <tr key={item.id}>
+                          <td className="cell-raw">{item.rawSkill}</td>
+                          <td className="cell-skill">
+                            {suggestedName ?? <span className="cell-empty">No suggestion</span>}
+                          </td>
+                          <td className="cell-description">
+                            {s.description
+                              ? <span className="cell-desc-text">{s.description}</span>
+                              : <span className="cell-empty">—</span>}
+                          </td>
+                          <td>
+                            {s.category
+                              ? <span className="category-tag">{s.category}</span>
+                              : <span className="cell-empty">—</span>}
+                          </td>
+                          <td>
+                            {suggestionAliases.length > 0
+                              ? (
+                                <ul className="alias-chip-list alias-chip-list--inline">
+                                  {suggestionAliases.map((alias) => (
+                                    <li key={alias} className="alias-chip">{alias}</li>
+                                  ))}
+                                </ul>
+                              )
+                              : <span className="cell-empty">—</span>
+                            }
+                          </td>
+                          <td className="cell-actions">
+                            {hasSuggestion && (
+                              <button
+                                className="action-btn action-btn--resolve"
+                                onClick={() => handleApprove(item)}
+                                disabled={isApprovingThis}
+                                aria-label={`Approve suggestion for ${item.rawSkill}`}
+                              >
+                                {isApprovingThis ? "Approving…" : "Approve"}
+                              </button>
+                            )}
+                            {hasSuggestion && (
+                              <button
+                                className="action-btn action-btn--edit"
+                                onClick={() => { setEditApproveTarget(item); setEditApproveError(null); }}
+                                aria-label={`Edit suggestion for ${item.rawSkill}`}
+                              >
+                                Edit
+                              </button>
+                            )}
+                            <button
+                              className="action-btn action-btn--delete"
+                              onClick={() => handleReject(item)}
+                              aria-label={`Reject ${item.rawSkill}`}
+                            >
+                              Reject
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1088,8 +1369,16 @@ function UnresolvedAdminPage({ session }) {
           <Paginator page={page} total={total} pageSize={PAGE_SIZE} onPrev={() => setPage((p) => p - 1)} onNext={() => setPage((p) => p + 1)} />
         </>
       )}
-      {editTarget && <EditUnresolvedModal item={editTarget} onSave={handleEdit} onClose={() => { setEditTarget(null); setEditError(null); }} saving={editing} saveError={editError} />}
-      {promoteTarget && <AddToOrgSkillsModal item={promoteTarget} onSave={handlePromote} onClose={() => { setPromoteTarget(null); setPromoteError(null); }} saving={promoting} saveError={promoteError} token={session.token} />}
+
+      {editApproveTarget && (
+        <EditAndApproveModal
+          item={editApproveTarget}
+          onApprove={handleEditApprove}
+          onClose={() => { setEditApproveTarget(null); setEditApproveError(null); }}
+          saving={editApproving}
+          saveError={editApproveError}
+        />
+      )}
     </div>
   );
 }

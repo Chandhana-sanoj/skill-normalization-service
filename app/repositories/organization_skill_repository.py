@@ -2,7 +2,7 @@
 
 Column layout after alter_organization_skill.py migration:
     id               SERIAL PK
-    organization_id  INTEGER FK → organization(id)
+    organization_id  INTEGER FK â†’ organization(id)
     name             TEXT        kept in sync with normalized_skill (VectorSearcher uses it)
     description      TEXT        free-text description / notes
     embedding        vector      embedding of normalized_skill (same text as name)
@@ -38,7 +38,7 @@ class OrganizationSkillRepository:
     def __init__(self):
         self.db_config = DB_CONFIG
 
-    # ── Helpers ───────────────────────────────────────────────────────────────
+    # â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @staticmethod
     def _row_to_dict(row: tuple) -> dict:
@@ -51,7 +51,7 @@ class OrganizationSkillRepository:
             "description":     description or "",
         }
 
-    # ── Read ──────────────────────────────────────────────────────────────────
+    # â”€â”€ Read â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def find_by_name(
         self,
@@ -129,7 +129,7 @@ class OrganizationSkillRepository:
 
         return [self._row_to_dict(r) for r in rows], total
 
-    # ── Write ─────────────────────────────────────────────────────────────────
+    # â”€â”€ Write â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def create(
         self,
@@ -265,3 +265,61 @@ class OrganizationSkillRepository:
             with conn.cursor() as cur:
                 cur.execute(query, (skill_id, organization_id))
                 return cur.rowcount > 0
+
+    def get_aliases_for_skills(
+        self,
+        organization_id: int,
+        skill_ids: list[int],
+    ) -> dict[int, list[str]]:
+        """Return a mapping of organization_skill_id -> [alias, ...].
+
+        Only returns aliases for skills that belong to *organization_id*,
+        preventing cross-org data leakage.  Returns an empty dict when
+        skill_ids is empty.
+        """
+        if not skill_ids:
+            return {}
+
+        query = """
+            SELECT osa.organization_skill_id, osa.alias
+            FROM organization_skill_alias osa
+            JOIN organization_skill os
+              ON os.id = osa.organization_skill_id
+            WHERE os.organization_id = %s
+              AND osa.organization_skill_id = ANY(%s)
+            ORDER BY osa.organization_skill_id, osa.alias;
+        """
+        result: dict[int, list[str]] = {sid: [] for sid in skill_ids}
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (organization_id, skill_ids))
+                for skill_id, alias in cur.fetchall():
+                    result[skill_id].append(alias)
+        return result
+
+    def add_aliases_in_transaction(
+        self,
+        conn: "psycopg.Connection",
+        organization_skill_id: int,
+        aliases: list[str],
+    ) -> None:
+        """Insert aliases for an organization skill within an open transaction."""
+        query = """
+            INSERT INTO organization_skill_alias (
+                organization_skill_id,
+                alias
+            )
+            VALUES (%s, %s)
+            ON CONFLICT DO NOTHING;
+        """
+
+        cleaned_aliases = {
+            alias.strip()
+            for alias in aliases
+            if isinstance(alias, str)
+            and alias.strip()
+        }
+
+        with conn.cursor() as cur:
+            for alias in cleaned_aliases:
+                cur.execute(query, (organization_skill_id, alias))
