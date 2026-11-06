@@ -1,6 +1,7 @@
 // src/App.jsx
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import "./App.css";
 
 // Backend URL can be overridden in .env with VITE_API_BASE_URL.
@@ -83,22 +84,72 @@ function SearchBar({ id, value, onChange, placeholder, label }) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 /**
- * AliasPopover — displays a "View Aliases" button that opens a compact popover
- * listing all aliases for a canonical skill as individual chip tags.
+ * AliasPopover — displays a "View Aliases" button that opens a portal-based
+ * popover listing all aliases as individual chip tags.
+ *
+ * The popover is rendered into document.body via a React portal so it is never
+ * clipped by parent containers with overflow: auto | hidden | scroll.
+ * Position is calculated from the trigger button's bounding rect and the popover
+ * automatically flips above the button when there is not enough space below.
  *
  * Props:
- *   aliases  {string[]}  — list of alias display names from the API
- *   skillName {string}   — the canonical skill name (used in aria-label)
+ *   aliases   {string[]}  — list of alias display names from the API
+ *   skillName {string}    — the canonical skill name (used in aria-label)
  */
 function AliasPopover({ aliases, skillName }) {
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef(null);
+  const [open, setOpen]   = useState(false);
+  const [pos, setPos]     = useState({ top: 0, left: 0, flipUp: false });
+  const btnRef            = useRef(null);
+  const popoverRef        = useRef(null);
 
-  // Close popover when clicking outside the container.
+  const count = Array.isArray(aliases) ? aliases.length : 0;
+
+  // ── Recalculate popover position from the trigger button ──────────────────
+  const reposition = useCallback(() => {
+    if (!btnRef.current) return;
+    const rect      = btnRef.current.getBoundingClientRect();
+    const vpH       = window.innerHeight;
+    const popH      = popoverRef.current?.offsetHeight ?? 300;
+    const GAP       = 6;
+    const spaceBelow = vpH - rect.bottom - GAP;
+    const flipUp     = spaceBelow < popH && rect.top > popH + GAP;
+
+    setPos({
+      top:    flipUp ? rect.top  + window.scrollY - popH - GAP
+                     : rect.bottom + window.scrollY + GAP,
+      left:   Math.min(
+        rect.left + window.scrollX,
+        window.innerWidth + window.scrollX - 360 - 16   // keep within viewport
+      ),
+      flipUp,
+    });
+  }, []);
+
+  // Reposition whenever popover opens or the window/document scrolls/resizes.
+  useEffect(() => {
+    if (!open) return;
+    reposition();
+    window.addEventListener("scroll",  reposition, true);
+    window.addEventListener("resize",  reposition);
+    return () => {
+      window.removeEventListener("scroll",  reposition, true);
+      window.removeEventListener("resize",  reposition);
+    };
+  }, [open, reposition]);
+
+  // After portal renders, run a second reposition pass with actual heights.
+  useEffect(() => {
+    if (open) reposition();
+  }, [open, reposition]);
+
+  // ── Close on click outside both trigger and popover ───────────────────────
   useEffect(() => {
     if (!open) return;
     function handleOutside(e) {
-      if (containerRef.current && !containerRef.current.contains(e.target)) {
+      if (
+        btnRef.current    && !btnRef.current.contains(e.target) &&
+        popoverRef.current && !popoverRef.current.contains(e.target)
+      ) {
         setOpen(false);
       }
     }
@@ -106,26 +157,58 @@ function AliasPopover({ aliases, skillName }) {
     return () => document.removeEventListener("mousedown", handleOutside);
   }, [open]);
 
-  // Close popover on Escape key.
+  // ── Close on Escape ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!open) return;
-    function handleKey(e) {
-      if (e.key === "Escape") setOpen(false);
-    }
+    function handleKey(e) { if (e.key === "Escape") setOpen(false); }
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
   }, [open]);
 
-  const count = Array.isArray(aliases) ? aliases.length : 0;
+  // ── Render ────────────────────────────────────────────────────────────────
+  const popoverPanel = open && createPortal(
+    <div
+      ref={popoverRef}
+      className="alias-popover"
+      role="dialog"
+      aria-label={`Aliases for ${skillName}`}
+      style={{ position: "absolute", top: pos.top, left: pos.left }}
+    >
+      <div className="alias-popover-header">
+        <span className="alias-popover-title">
+          Aliases
+          <span className="alias-popover-count">{count}</span>
+        </span>
+        <button className="alias-popover-close" onClick={() => setOpen(false)} aria-label="Close aliases">✕</button>
+      </div>
+      <div className="alias-popover-body">
+        {count === 0 ? (
+          <p className="alias-popover-empty">No aliases registered for this skill.</p>
+        ) : (
+          <div className="alias-chip-list">
+            {aliases.map((alias, i) => (
+              <span key={i} className="alias-chip">{alias}</span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+
+  if (count === 0) {
+    return <span className="cell-empty">—</span>;
+  }
 
   return (
-    <div className="alias-popover-container" ref={containerRef}>
+    <>
       <button
+        ref={btnRef}
         className="alias-view-btn"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-label={`View aliases for ${skillName}`}
-        title={count === 0 ? "No aliases" : `${count} alias${count !== 1 ? "es" : ""}`}
+        title={`${count} alias${count !== 1 ? "es" : ""}`}
       >
         {/* Eye icon — communicates "view" */}
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -134,30 +217,8 @@ function AliasPopover({ aliases, skillName }) {
         </svg>
         View Aliases
       </button>
-
-      {open && (
-        <div className="alias-popover" role="dialog" aria-label={`Aliases for ${skillName}`}>
-          <div className="alias-popover-header">
-            <span className="alias-popover-title">
-              Aliases
-              <span className="alias-popover-count">{count}</span>
-            </span>
-            <button className="alias-popover-close" onClick={() => setOpen(false)} aria-label="Close aliases">✕</button>
-          </div>
-          <div className="alias-popover-body">
-            {count === 0 ? (
-              <p className="alias-popover-empty">No aliases registered for this skill.</p>
-            ) : (
-              <div className="alias-chip-list">
-                {aliases.map((alias, i) => (
-                  <span key={i} className="alias-chip">{alias}</span>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
+      {popoverPanel}
+    </>
   );
 }
 
@@ -1318,17 +1379,8 @@ function UnresolvedAdminPage({ session }) {
                               ? <span className="category-tag">{s.category}</span>
                               : <span className="cell-empty">—</span>}
                           </td>
-                          <td>
-                            {suggestionAliases.length > 0
-                              ? (
-                                <ul className="alias-chip-list alias-chip-list--inline">
-                                  {suggestionAliases.map((alias) => (
-                                    <li key={alias} className="alias-chip">{alias}</li>
-                                  ))}
-                                </ul>
-                              )
-                              : <span className="cell-empty">—</span>
-                            }
+                          <td className="cell-aliases">
+                            <AliasPopover aliases={suggestionAliases} skillName={suggestedName || item.rawSkill} />
                           </td>
                           <td className="cell-actions">
                             {hasSuggestion && (

@@ -1588,31 +1588,24 @@ input {
 
 /* ── Popover container (positioned) ─────────────────────────────────────── */
 
+/* .alias-popover-container is no longer needed for portal variant but kept for
+   any legacy/non-portal usages that may appear during transition. */
 .alias-popover-container {
   position: relative;
   display: inline-block;
 }
 
+/* Portal-rendered alias popover — position is supplied via inline style from JS.
+   z-index 1200 clears all table stacking contexts, modals (400) and nav (100). */
 .alias-popover {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 400;
-  min-width: 360px;
+  /* position: absolute is set via inline style by AliasPopover */
+  z-index: 1200;
+  min-width: 320px;
+  max-width: min(420px, calc(100vw - 32px));
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: 10px;
-  box-shadow: 0 8px 24px rgb(28 27 25 / 10%), 0 2px 6px rgb(28 27 25 / 6%);
-  /* Never overflow the viewport horizontally */
-  max-width: min(520px, calc(100vw - 32px));
-}
-
-/* Flip popover to the right when it would overflow to the left */
-@media (max-width: 540px) {
-  .alias-popover {
-    left: auto;
-    right: 0;
-  }
+  box-shadow: 0 8px 28px rgb(28 27 25 / 14%), 0 2px 8px rgb(28 27 25 / 7%);
 }
 
 /* ── Popover header ──────────────────────────────────────────────────────── */
