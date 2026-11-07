@@ -31,7 +31,8 @@ class OrganizationSkillRequest(BaseModel):
     raw_skill:        str        = Field(..., min_length=1, max_length=300)
     normalized_skill: str        = Field(..., min_length=1, max_length=300)
     category:         str | None = Field(default=None, max_length=150)
-    description:      str | None = Field(default=None, max_length=2000)
+    description:      str        = Field(..., min_length=1, max_length=2000)
+    aliases:          list[str]  = Field(default_factory=list)
 
 
 class PromoteUnresolvedRequest(BaseModel):
@@ -159,9 +160,13 @@ def create_organization_skill(
         raw_skill=raw_skill,
         normalized_skill=normalized_skill,
         category=payload.category or None,
-        description=payload.description or None,
+        description=payload.description,
         embedding=embedding,
     )
+
+    # Persist aliases (optional — empty list is a no-op).\r
+    if payload.aliases:
+        repo.replace_aliases(organization_id, skill_id, payload.aliases)
 
     return _skill_response(skill_id, organization_id, payload, "Skill created successfully")
 
@@ -200,12 +205,15 @@ def update_organization_skill(
         raw_skill=raw_skill,
         normalized_skill=normalized_skill,
         category=payload.category or None,
-        description=payload.description or None,
+        description=payload.description,
         embedding=embedding,
     )
 
     if not updated:
         raise HTTPException(status_code=404, detail="Skill not found in your organization")
+
+    # Always replace aliases (empty list clears them, non-empty replaces them).\r
+    repo.replace_aliases(organization_id, skill_id, payload.aliases)
 
     return _skill_response(skill_id, organization_id, payload, "Skill updated successfully")
 

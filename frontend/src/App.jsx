@@ -654,8 +654,13 @@ async function saveOrgSkill({ skill, token }) {
   const body = {
     raw_skill:        skill.rawSkill,
     normalized_skill: skill.normalizedSkill,
-    category:         skill.category  || null,
-    description:      skill.description || null,
+    category:         skill.category    || null,
+    description:      skill.description || "",
+    // Parse comma-separated alias string → clean array; always send the field.
+    aliases: (skill.aliasesText || "")
+      .split(",")
+      .map((a) => a.trim())
+      .filter(Boolean),
   };
   if (skill.id) {
     return apiRequest(`/api/v1/organizations/me/skills/${skill.id}`, {
@@ -691,18 +696,22 @@ async function promoteUnresolved({ unresolvedId, skill, token }) {
   );
 }
 
-const BLANK_ORG_SKILL = { rawSkill: "", normalizedSkill: "", category: "", description: "" };
+const BLANK_ORG_SKILL = { rawSkill: "", normalizedSkill: "", category: "", description: "", aliasesText: "" };
 
 // ── Shared skill form modal (Add Skill / Edit Skill) ──────────────────────────
 function SkillFormModal({ initial, onSave, onClose, saving, saveError, token }) {
   const [form, setForm] = useState(() => {
     if (!initial) return BLANK_ORG_SKILL;
-    // Map API response fields → form fields (description may come from either field name)
+    // Map API response fields → form fields.
+    // aliases comes from the list endpoint as string[]; join for the text input.
     return {
       rawSkill:        initial.rawSkill        ?? "",
       normalizedSkill: initial.normalizedSkill ?? "",
       category:        initial.category        ?? "",
       description:     initial.description     ?? initial.notes ?? "",
+      aliasesText:     Array.isArray(initial.aliases)
+                         ? initial.aliases.join(", ")
+                         : "",
     };
   });
   const [categories, setCategories] = useState([]);
@@ -721,7 +730,7 @@ function SkillFormModal({ initial, onSave, onClose, saving, saveError, token }) 
 
   return (
     <div className="modal-backdrop" onClick={handleBackdropClick} role="dialog" aria-modal="true" aria-label={isEdit ? "Edit skill" : "Add skill"}>
-      <div className="modal-card">
+      <div className="modal-card modal-card--wide">
         <div className="modal-header">
           <h2 className="modal-title">{isEdit ? "Edit Skill" : "Add Skill"}</h2>
           <button className="modal-close" onClick={onClose} aria-label="Close">✕</button>
@@ -747,12 +756,35 @@ function SkillFormModal({ initial, onSave, onClose, saving, saveError, token }) 
             <span className="field-hint">Choose from the canonical catalogue categories.</span>
           </div>
           <div className="form-field">
-            <label htmlFor="description">Description</label>
-            <textarea id="description" name="description" rows={3} value={form.description} onChange={handleChange} placeholder="Optional description…" />
+            <label htmlFor="description">Description <span className="required">*</span></label>
+            <textarea
+              id="description"
+              name="description"
+              rows={3}
+              value={form.description}
+              onChange={handleChange}
+              placeholder="Describe what this skill entails…"
+              required
+            />
+            <span className="field-hint">A brief description of the skill is required.</span>
+          </div>
+          <div className="form-field">
+            <label htmlFor="aliasesText">Aliases</label>
+            <input
+              id="aliasesText"
+              name="aliasesText"
+              type="text"
+              value={form.aliasesText}
+              onChange={handleChange}
+              placeholder="e.g. ReactJS, React.js, React Framework"
+            />
+            <span className="field-hint">Optional. Separate multiple aliases with a comma.</span>
           </div>
           <div className="modal-actions">
             <button type="button" className="btn-secondary" onClick={onClose} disabled={saving}>Cancel</button>
-            <button type="submit" className="btn-primary" disabled={saving}>{saving ? "Saving…" : isEdit ? "Save changes" : "Add skill"}</button>
+            <button type="submit" className="btn-primary" disabled={saving || !form.description.trim()}>
+              {saving ? "Saving…" : isEdit ? "Save changes" : "Add skill"}
+            </button>
           </div>
         </form>
       </div>

@@ -323,3 +323,43 @@ class OrganizationSkillRepository:
         with conn.cursor() as cur:
             for alias in cleaned_aliases:
                 cur.execute(query, (organization_skill_id, alias))
+
+    def replace_aliases(
+        self,
+        organization_id: int,
+        skill_id: int,
+        aliases: list[str],
+    ) -> None:
+        """Replace all aliases for an org skill with the given list.
+
+        Deletes every existing alias for *skill_id* (scoped to
+        *organization_id* to prevent cross-org mutations) then inserts
+        the cleaned, deduplicated aliases supplied by the caller.
+
+        Passing an empty list clears all aliases for the skill.
+        """
+        cleaned: set[str] = {
+            a.strip()
+            for a in aliases
+            if isinstance(a, str) and a.strip()
+        }
+
+        delete_query = """
+            DELETE FROM organization_skill_alias
+            WHERE organization_skill_id = %s
+              AND organization_skill_id IN (
+                  SELECT id FROM organization_skill WHERE organization_id = %s
+              );
+        """
+        insert_query = """
+            INSERT INTO organization_skill_alias (organization_skill_id, alias)
+            VALUES (%s, %s)
+            ON CONFLICT DO NOTHING;
+        """
+
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(delete_query, (skill_id, organization_id))
+                for alias in cleaned:
+                    cur.execute(insert_query, (skill_id, alias))
+            conn.commit()
