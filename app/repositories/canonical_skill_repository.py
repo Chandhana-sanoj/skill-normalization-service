@@ -128,3 +128,209 @@ class CanonicalSkillRepository:
                 cur.execute(query, (canonical_name,))
                 rows = cur.fetchall()
         return [row[0].strip() for row in rows if row[0] and row[0].strip()]
+
+
+    def list_paginated(
+        self,
+        search: str = "",
+        page: int = 1,
+        limit: int = 25,
+    ) -> tuple[list[dict], int]:
+        """Return paginated canonical skills without aliases or embeddings."""
+        base_where = "WHERE 1=1"
+        params: list = []
+
+        if search.strip():
+            base_where += " AND (LOWER(name) LIKE %s OR LOWER(COALESCE(description,'')) LIKE %s)"
+            v = f"%{search.strip().lower()}%"
+            params.extend([v, v])
+
+        count_query = f"SELECT COUNT(*) FROM canonical_skill {base_where};"
+        list_query = f"""
+            SELECT id, name, description, category
+            FROM canonical_skill
+            {base_where}
+            ORDER BY name
+            LIMIT %s OFFSET %s;
+        """
+        offset = (page - 1) * limit
+
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(count_query, params)
+                total = cur.fetchone()[0]
+                cur.execute(list_query, params + [limit, offset])
+                rows = cur.fetchall()
+
+        items = [
+            {"id": row[0], "name": row[1], "description": row[2], "category": row[3]}
+            for row in rows
+        ]
+        return items, total
+
+    def get_skill_by_id(self, skill_id: int) -> dict | None:
+        """Return a single canonical skill with its aliases as [{id, alias}]."""
+        query = """
+            SELECT
+                cs.id, cs.name, cs.description, cs.category,
+                COALESCE(
+                    JSON_AGG(JSON_BUILD_OBJECT('id', sa.id, 'alias', sa.alias) ORDER BY sa.id)
+                    FILTER (WHERE sa.id IS NOT NULL),
+                    '[]'::json
+                ) AS aliases
+            FROM canonical_skill cs
+            LEFT JOIN skill_alias sa ON sa.canonical_id = cs.id
+            WHERE cs.id = %s
+            GROUP BY cs.id, cs.name, cs.description, cs.category;
+        """
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (skill_id,))
+                row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0], "name": row[1], "description": row[2],
+            "category": row[3], "aliases": row[4] if row[4] else [],
+        }
+
+    def list_all_skills(self) -> list[dict]:
+        """Return all canonical skills with their aliases as {id, alias} objects."""
+        query = """
+            SELECT
+                cs.id,
+                cs.name,
+                cs.description,
+                cs.category,
+                COALESCE(
+                    JSON_AGG(
+                        JSON_BUILD_OBJECT('id', sa.id, 'alias', sa.alias)
+                        ORDER BY sa.id
+                    ) FILTER (WHERE sa.id IS NOT NULL),
+                    '[]'::json
+                ) AS aliases
+            FROM canonical_skill cs
+            LEFT JOIN skill_alias sa
+                ON sa.canonical_id = cs.id
+            GROUP BY
+                cs.id,
+                cs.name,
+                cs.description,
+                cs.category
+            ORDER BY cs.name;
+        """
+
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(query)
+                rows = cur.fetchall()
+
+        return [
+            {
+                "id": row[0],
+                "name": row[1],
+                "description": row[2],
+                "category": row[3],
+                "aliases": row[4] if row[4] else [],
+            }
+            for row in rows
+        ]
+    def create_skill(
+        self,
+        name: str,
+        description: str | None,
+        category: str | None,
+        embedding: list[float],
+    ) -> int:
+
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "LOCK TABLE canonical_skill IN EXCLUSIVE MODE;"
+                )
+
+                cur.execute(
+                    "SELECT COALESCE(MAX(id), 0) + 1 FROM canonical_skill;"
+                )
+                new_id = cur.fetchone()[0]
+
+                cur.execute(
+                    """
+                    INSERT INTO canonical_skill
+                        (id, name, description, category, embedding)
+                    VALUES (%s, %s, %s, %s, %s::vector);
+                    """,
+                    (new_id, name, description, category, embedding),
+                )
+
+        return new_id
+
+    def add_alias(self, canonical_id: int, alias: str) -> int:
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO skill_alias (alias, canonical_id)
+                    VALUES (%s, %s)
+                    RETURNING id;
+                    """,
+                    (alias, canonical_id),
+                )
+                alias_id = cur.fetchone()[0]
+
+        return alias_id
+
+    def delete_alias(self, alias_id: int, canonical_id: int) -> bool:
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    DELETE FROM skill_alias
+                    WHERE id = %s AND canonical_id = %s
+                    RETURNING id;
+                    """,
+                    (alias_id, canonical_id),
+                )
+                return cur.fetchone() is not None
+
+    def list_aliases(self, canonical_id: int) -> list[dict]:
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, alias
+                    FROM skill_alias
+                    WHERE canonical_id = %s
+                    ORDER BY alias;
+                    """,
+                    (canonical_id,),
+                )
+                rows = cur.fetchall()
+
+        return [
+            {"id": row[0], "alias": row[1]}
+            for row in rows
+        ]
+    def update_skill(
+        self,
+        skill_id: int,
+        name: str,
+        description: str | None,
+        category: str | None,
+        embedding: list[float],
+    ) -> bool:
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE canonical_skill
+                    SET name = %s,
+                        description = %s,
+                        category = %s,
+                        embedding = %s::vector
+                    WHERE id = %s
+                    RETURNING id;
+                    """,
+                    (name, description, category, embedding, skill_id),
+                )
+                return cur.fetchone() is not None

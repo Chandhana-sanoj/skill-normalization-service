@@ -1,7 +1,11 @@
-import { StrictMode, Component } from 'react'
+import { StrictMode, Component, lazy, Suspense } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
+
+// Lazily load the Super Admin app only when navigating to /super-admin/*
+// This keeps the org-app bundle unaffected by the SA code.
+const SuperAdminApp = lazy(() => import('./superadmin/SuperAdminApp.jsx'))
 
 class AppErrorBoundary extends Component {
   constructor(props) {
@@ -33,10 +37,36 @@ class AppErrorBoundary extends Component {
   }
 }
 
+// Route detection: pathname determines which app to render.
+// The Super Admin app uses hash routing internally (#/super-admin/...).
+// The org app does not use the URL at all (session state only).
+// We detect by both pathname AND hash to cover direct navigation.
+function isSuperAdminRoute() {
+  const path = window.location.pathname;
+  const hash = window.location.hash;
+  return (
+    path.startsWith('/super-admin') ||
+    hash.startsWith('#/super-admin')
+  );
+}
+
+function Root() {
+  // Static check at mount — the page will reload on hard navigation anyway.
+  // For SPA in-page navigation the SuperAdminApp manages its own hash routes.
+  if (isSuperAdminRoute()) {
+    return (
+      <Suspense fallback={<div style={{ padding: 40, fontFamily: 'sans-serif', color: '#7a3520' }}>Loading…</div>}>
+        <SuperAdminApp />
+      </Suspense>
+    );
+  }
+  return <App />;
+}
+
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <AppErrorBoundary>
-      <App />
+      <Root />
     </AppErrorBoundary>
   </StrictMode>,
 )

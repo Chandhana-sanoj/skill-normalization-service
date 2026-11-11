@@ -652,7 +652,6 @@ async function fetchCategories(token) {
 
 async function saveOrgSkill({ skill, token }) {
   const body = {
-    raw_skill:        skill.rawSkill,
     normalized_skill: skill.normalizedSkill,
     category:         skill.category    || null,
     description:      skill.description || "",
@@ -680,6 +679,14 @@ async function deleteOrgSkill({ id, token }) {
   return apiRequest(`/api/v1/organizations/me/skills/${id}`, { method: "DELETE", token });
 }
 
+async function requestCatalogueAddition({ id, token }) {
+  return apiRequest(`/api/v1/organizations/me/skills/${id}/request-catalogue`, {
+    method: "POST",
+    token,
+    body: JSON.stringify({}),
+  });
+}
+
 async function promoteUnresolved({ unresolvedId, skill, token }) {
   return apiRequest(
     `/api/v1/organizations/me/unresolved/${unresolvedId}/promote`,
@@ -687,7 +694,6 @@ async function promoteUnresolved({ unresolvedId, skill, token }) {
       method: "POST",
       token,
       body: JSON.stringify({
-        raw_skill:        skill.rawSkill,
         normalized_skill: skill.normalizedSkill,
         category:         skill.category     || null,
         description:      skill.description  || null,
@@ -738,11 +744,6 @@ function SkillFormModal({ initial, onSave, onClose, saving, saveError, token }) 
         {saveError && <div className="modal-error" role="alert"><strong>Could not save.</strong> {saveError}</div>}
         <form className="modal-form" onSubmit={handleSubmit}>
           <div className="form-field">
-            <label htmlFor="rawSkill">Raw Skill <span className="required">*</span></label>
-            <input id="rawSkill" name="rawSkill" type="text" value={form.rawSkill} onChange={handleChange} placeholder="e.g. react.js" required />
-            <span className="field-hint">The skill name as your organisation uses it.</span>
-          </div>
-          <div className="form-field">
             <label htmlFor="normalizedSkill">Normalized Skill <span className="required">*</span></label>
             <input id="normalizedSkill" name="normalizedSkill" type="text" value={form.normalizedSkill} onChange={handleChange} placeholder="e.g. React" required />
             <span className="field-hint">The canonical standardised skill name.</span>
@@ -792,6 +793,56 @@ function SkillFormModal({ initial, onSave, onClose, saving, saveError, token }) 
   );
 }
 
+// ── Catalogue request status badge (org-facing) ───────────────────────────────
+function CatalogueStatusBadge({ status }) {
+  const cfg = {
+    not_submitted: { label: "Not in Catalogue", cls: "badge-not-submitted" },
+    pending:       { label: "Pending Review",    cls: "badge-pending" },
+    approved:      { label: "Approved",          cls: "badge-approved" },
+    rejected:      { label: "Rejected",          cls: "badge-rejected" },
+  };
+  const { label, cls } = cfg[status] ?? { label: status ?? "Unknown", cls: "badge-not-submitted" };
+  return <span className={`catalogue-status-badge ${cls}`}>{label}</span>;
+}
+
+// ── Single org skill row ───────────────────────────────────────────────────────
+function OrgSkillRow({ item, isAdmin, onEdit, onDelete, isEligible, checked, onToggle, onStatusChange }) {
+  const [localStatus, setLocalStatus] = useState(item.reviewStatus ?? "not_submitted");
+
+  useEffect(() => { setLocalStatus(item.reviewStatus ?? "not_submitted"); }, [item.reviewStatus]);
+
+  return (
+    <tr>
+      {isAdmin && (
+        <td className="cell-checkbox">
+          {isEligible
+            ? <input type="checkbox" checked={checked} onChange={onToggle} aria-label={`Select ${item.rawSkill}`} />
+            : null}
+        </td>
+      )}
+      <td className="cell-raw">{item.rawSkill}</td>
+      <td className="cell-skill">{item.normalizedSkill || <span className="cell-empty">—</span>}</td>
+      <td className="cell-category">{item.category ? <span className="category-tag">{item.category}</span> : <span className="cell-empty">—</span>}</td>
+      <td className="cell-description">{item.description || <span className="cell-empty">—</span>}</td>
+      <td className="cell-aliases">
+        <AliasPopover aliases={item.aliases ?? []} skillName={item.normalizedSkill || item.rawSkill} />
+      </td>
+      <td className="cell-catalogue-status">
+        <CatalogueStatusBadge status={localStatus} />
+        {isAdmin && localStatus === "pending" && (
+          <span className="cell-catalogue-awaiting">Awaiting review</span>
+        )}
+      </td>
+      {isAdmin && (
+        <td className="cell-actions">
+          <button className="action-btn" onClick={onEdit} aria-label={`Edit ${item.rawSkill}`}>Edit</button>
+          <button className="action-btn action-btn--delete" onClick={onDelete} aria-label={`Delete ${item.rawSkill}`}>Delete</button>
+        </td>
+      )}
+    </tr>
+  );
+}
+
 function OrgSkillsPage({ session }) {
   const isAdmin = session.role === "Admin";
   const [search, setSearch] = useState("");
@@ -806,9 +857,15 @@ function OrgSkillsPage({ session }) {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const [deleteError, setDeleteError] = useState(null);
+  // ── Bulk catalogue selection ──────────────────────────────────────────────
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkSubmitting, setBulkSubmitting] = useState(false);
+  const [bulkResult, setBulkResult] = useState(null);
 
   useEffect(() => { const t = setTimeout(() => setDebouncedSearch(search), 400); return () => clearTimeout(t); }, [search]);
   useEffect(() => { setPage(1); }, [debouncedSearch]);
+  // Clear selection whenever page or search changes
+  useEffect(() => { setSelectedIds(new Set()); setBulkResult(null); }, [debouncedSearch, page]);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -837,10 +894,40 @@ function OrgSkillsPage({ session }) {
     catch (err) { setDeleteError(err.message || "Delete failed."); }
   }
 
+  // ── Bulk catalogue request ────────────────────────────────────────────────
+  const eligibleIds = items
+    .filter((i) => { const s = i.reviewStatus ?? "not_submitted"; return s === "not_submitted" || s === "rejected"; })
+    .map((i) => i.id);
+
+  async function handleBulkRequest() {
+    if (selectedIds.size === 0 || bulkSubmitting) return;
+    setBulkSubmitting(true); setBulkResult(null);
+    const toSubmit = items.filter((i) => selectedIds.has(i.id));
+    const results = await Promise.allSettled(
+      toSubmit.map((item) =>
+        requestCatalogueAddition({ id: item.id, token: session.token })
+          .then((res) => ({ id: item.id, status: res.reviewStatus ?? "pending" }))
+      )
+    );
+    const succeeded = new Set();
+    const failed = [];
+    results.forEach((r, idx) => {
+      if (r.status === "fulfilled") succeeded.add(toSubmit[idx].id);
+      else failed.push({ id: toSubmit[idx].id, label: toSubmit[idx].rawSkill || toSubmit[idx].normalizedSkill, error: r.reason?.message || "Request failed." });
+    });
+    setItems((prev) => prev.map((i) => succeeded.has(i.id) ? { ...i, reviewStatus: "pending" } : i));
+    setSelectedIds(new Set(failed.map((f) => f.id)));
+    setBulkResult({ success: succeeded.size, failed });
+    setBulkSubmitting(false);
+  }
+
   return (
     <div className="page">
       <div className="page-header">
-        <div><h1 className="page-title">Organization Skills</h1><p className="page-subtitle">Skills for <strong>{session.orgName}</strong> ({session.orgId}).&ensp;{!loading && !error && <span>{total.toLocaleString()} {total === 1 ? "skill" : "skills"}</span>}</p></div>
+        <div>
+          <h1 className="page-title">Organization Skills</h1>
+          <p className="page-subtitle">Skills for <strong>{session.orgName}</strong> ({session.orgId}).&ensp;{!loading && !error && <span>{total.toLocaleString()} {total === 1 ? "skill" : "skills"}</span>}</p>
+        </div>
         {isAdmin && <button id="add-org-skill-btn" className="btn-primary" onClick={openAdd}>+ Add Skill</button>}
       </div>
       <div className="toolbar"><SearchBar id="org-skills-search" value={search} onChange={setSearch} placeholder="Search organisation skills…" label="Search organisation skills" /></div>
@@ -849,30 +936,80 @@ function OrgSkillsPage({ session }) {
       {!loading && error && <div className="state-error" role="alert"><strong>Could not load organisation skills.</strong><p>{error}</p><button className="retry-btn" onClick={load}>Try again</button></div>}
       {!loading && !error && (
         <>
+          {/* Bulk action bar — only visible to admins when items are on-screen */}
+          {isAdmin && items.length > 0 && (
+            <>
+              <div className="bulk-action-bar">
+                <span className="bulk-action-count">
+                  {selectedIds.size > 0 ? `${selectedIds.size} selected` : `${eligibleIds.length} eligible skill${eligibleIds.length !== 1 ? "s" : ""}`}
+                </span>
+                <button
+                  className="btn-primary"
+                  onClick={handleBulkRequest}
+                  disabled={selectedIds.size === 0 || bulkSubmitting}
+                >
+                  {bulkSubmitting ? "Submitting…" : `Request Catalogue Addition (${selectedIds.size})`}
+                </button>
+              </div>
+              {bulkResult && (
+                <div className={bulkResult.failed.length === 0 ? "state-success" : "state-error"} role="status">
+                  {bulkResult.success > 0 && <p>{bulkResult.success} skill{bulkResult.success !== 1 ? "s" : ""} submitted successfully.</p>}
+                  {bulkResult.failed.map((f) => <p key={f.id}>"{f.label}": {f.error}</p>)}
+                </div>
+              )}
+            </>
+          )}
           {items.length === 0
             ? <div className="table-empty"><p>No skills found. {isAdmin ? 'Use the "Add Skill" button to get started.' : "Contact your admin to add skills."}</p></div>
             : (
               <div className="table-wrapper">
                 <table className="data-table" aria-label="Organisation skills">
-                  <thead><tr><th scope="col">Raw Skill</th><th scope="col">Normalized Skill</th><th scope="col">Category</th><th scope="col">Description</th><th scope="col">Aliases</th>{isAdmin && <th scope="col"><span className="sr-only">Actions</span></th>}</tr></thead>
+                  <thead>
+                    <tr>
+                      {isAdmin && (
+                        <th scope="col" className="cell-checkbox">
+                          <input
+                            type="checkbox"
+                            aria-label="Select all eligible skills"
+                            checked={eligibleIds.length > 0 && eligibleIds.every((id) => selectedIds.has(id))}
+                            ref={(el) => {
+                              if (el) el.indeterminate = eligibleIds.some((id) => selectedIds.has(id)) && !eligibleIds.every((id) => selectedIds.has(id));
+                            }}
+                            onChange={(e) => setSelectedIds(e.target.checked ? new Set(eligibleIds) : new Set())}
+                            disabled={eligibleIds.length === 0}
+                          />
+                        </th>
+                      )}
+                      <th scope="col">Raw Skill</th>
+                      <th scope="col">Normalized Skill</th>
+                      <th scope="col">Category</th>
+                      <th scope="col">Description</th>
+                      <th scope="col">Aliases</th>
+                      <th scope="col">Catalogue Status</th>
+                      {isAdmin && <th scope="col"><span className="sr-only">Actions</span></th>}
+                    </tr>
+                  </thead>
                   <tbody>
-                    {items.map((item) => (
-                      <tr key={item.id}>
-                        <td className="cell-raw">{item.rawSkill}</td>
-                        <td className="cell-skill">{item.normalizedSkill || <span className="cell-empty">—</span>}</td>
-                        <td>{item.category ? <span className="category-tag">{item.category}</span> : <span className="cell-empty">—</span>}</td>
-                        <td className="cell-description">{item.description || <span className="cell-empty">—</span>}</td>
-                        <td className="cell-aliases">
-                          <AliasPopover aliases={item.aliases ?? []} skillName={item.normalizedSkill || item.rawSkill} />
-                        </td>
-                        {isAdmin && (
-                          <td className="cell-actions">
-                            <button className="action-btn" onClick={() => openEdit(item)} aria-label={`Edit ${item.rawSkill}`}>Edit</button>
-                            <button className="action-btn action-btn--delete" onClick={() => handleDelete(item)} aria-label={`Delete ${item.rawSkill}`}>Delete</button>
-                          </td>
-                        )}
-                      </tr>
-                    ))}
+                    {items.map((item) => {
+                      const eligible = eligibleIds.includes(item.id);
+                      return (
+                        <OrgSkillRow
+                          key={item.id}
+                          item={item}
+                          isAdmin={isAdmin}
+                          onEdit={() => openEdit(item)}
+                          onDelete={() => handleDelete(item)}
+                          isEligible={eligible}
+                          checked={selectedIds.has(item.id)}
+                          onToggle={() => setSelectedIds((prev) => {
+                            const next = new Set(prev);
+                            next.has(item.id) ? next.delete(item.id) : next.add(item.id);
+                            return next;
+                          })}
+                          onStatusChange={(id, status) => setItems((prev) => prev.map((i) => i.id === id ? { ...i, reviewStatus: status } : i))}
+                        />
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1054,11 +1191,6 @@ function AddToOrgSkillsModal({ item, onSave, onClose, saving, saveError, token }
         </div>
         {saveError && <div className="modal-error" role="alert"><strong>Could not add skill.</strong> {saveError}</div>}
         <form className="modal-form" onSubmit={handleSubmit}>
-          <div className="form-field">
-            <label htmlFor="promote-rawSkill">Raw Skill <span className="required">*</span></label>
-            <input id="promote-rawSkill" name="rawSkill" type="text" value={form.rawSkill} onChange={handleChange} placeholder="e.g. react.js" required />
-            <span className="field-hint">The skill as it appears in your organisation's data.</span>
-          </div>
           <div className="form-field">
             <label htmlFor="promote-normalizedSkill">Normalized Skill <span className="required">*</span></label>
             <input id="promote-normalizedSkill" name="normalizedSkill" type="text" value={form.normalizedSkill} onChange={handleChange} placeholder="e.g. React" required />
@@ -2229,11 +2361,31 @@ function App() {
     setLoginError(null);
     setLoginLoading(true);
     try {
-      const auth = await apiRequest("/api/v1/auth/login", {
+      // Unified login: one endpoint for all roles.
+      // The backend returns user_type so we can route without decoding the JWT.
+      const auth = await apiRequest("/api/v1/auth/unified-login", {
         method: "POST",
         body: JSON.stringify({ username: username.trim(), password }),
       });
       if (!auth.access_token) throw new Error("Login succeeded but the backend did not return an access token.");
+
+      if (auth.user_type === "super_admin") {
+        // Store the SA token in sessionStorage (same key the SA app uses).
+        // Then redirect to the SA app via hash navigation.
+        // The SA app's RequireAuth reads sessionStorage("sa_token") and will
+        // find it set, so it won't redirect back to the SA login page.
+        sessionStorage.setItem("sa_token", auth.access_token);
+        // Navigate to the SA app. We use replaceState so the org login page
+        // is not in the browser history after the redirect.
+        window.history.replaceState(null, "", "/super-admin");
+        window.location.hash = "/super-admin/dashboard";
+        // Force a full re-render of Root so isSuperAdminRoute() returns true
+        // and the lazy SA chunk is loaded.
+        window.location.reload();
+        return; // Do not update org session state
+      }
+
+      // Org user (org_admin or org_user) — existing flow.
       const user = await apiRequest("/api/v1/auth/me", { token: auth.access_token });
       setSession(makeSession(user, auth.access_token));
       setPassword("");

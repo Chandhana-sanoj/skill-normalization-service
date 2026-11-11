@@ -64,3 +64,54 @@ class OrganizationUserRepository:
             "password_hash": row[3],
             "role": row[4],
         }
+
+
+    def list_all_users(self) -> list[dict]:
+        """List users across all organizations."""
+        query = """
+            SELECT
+                ou.id,
+                ou.organization_id,
+                o.name AS organization_name,
+                ou.username,
+                ou.role,
+                ou.is_active
+            FROM organization_user ou
+            JOIN organization o
+                ON o.id = ou.organization_id
+            ORDER BY ou.id DESC;
+        """
+
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(query)
+                rows = cur.fetchall()
+
+        return [
+            {
+                "id": row[0],
+                "organization_id": row[1],
+                "organization_name": row[2],
+                "username": row[3],
+                "role": row[4],
+                "is_active": row[5],
+            }
+            for row in rows
+        ]
+
+    def update_user_status(
+        self,
+        user_id: int,
+        is_active: bool,
+    ) -> bool:
+        """Activate or deactivate an organization user."""
+        query = """
+            UPDATE organization_user
+            SET is_active = %s
+            WHERE id = %s;
+        """
+
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (is_active, user_id))
+                return cur.rowcount > 0

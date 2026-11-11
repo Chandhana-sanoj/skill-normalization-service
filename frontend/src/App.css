@@ -632,7 +632,9 @@ input {
 .cell-description {
   color: var(--color-muted);
   line-height: 1.5;
-  max-width: 480px;
+  max-width: 220px;
+  word-break: break-word;
+  white-space: normal;
 }
 
 .category-tag {
@@ -794,7 +796,8 @@ input {
   color: var(--color-muted);
   white-space: normal;
   word-break: break-word;
-  max-width: 260px;
+  max-width: 160px;
+  min-width: 100px;
 }
 
 /* Empty cell placeholder dash */
@@ -1097,6 +1100,128 @@ input {
   background: rgb(254 242 242);
   border-color: #ef4444;
   color: #dc2626;
+}
+
+/* Catalogue request button */
+.action-btn--request {
+  border-color: rgb(var(--color-accent-rgb, 180 80 0) / 35%);
+  color: var(--color-accent, #b45000);
+  font-size: 0.78rem;
+  padding: 3px 10px;
+}
+.action-btn--request:hover:not(:disabled) {
+  background: rgb(var(--color-accent-rgb, 180 80 0) / 8%);
+  border-color: var(--color-accent, #b45000);
+}
+.action-btn--request:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Catalogue status badges */
+.catalogue-status-badge {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+.badge-not-submitted {
+  background: rgb(28 27 25 / 7%);
+  color: var(--color-muted, #888);
+}
+.badge-pending {
+  background: rgb(210 140 0 / 12%);
+  color: #7a5200;
+}
+.badge-approved {
+  background: rgb(34 139 34 / 10%);
+  color: #1a6b1a;
+}
+.badge-rejected {
+  background: rgb(198 50 50 / 10%);
+  color: #9b2020;
+}
+
+
+
+/* ── Organisation Skills table layout ───────────────────────────────────── */
+
+/*
+ * The Catalogue Status column contains a badge + an optional action button.
+ * Without a fixed width the column grows unboundedly, pushing Edit/Delete
+ * off-screen.  We constrain it and let the button sit inline on the same row.
+ */
+.cell-catalogue-status {
+  min-width: 170px;
+  width: 170px;
+  vertical-align: middle;
+}
+
+/* Badge + button on the same row, no wrapping */
+.cell-catalogue-status-inner {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Error text below the badge row */
+.cell-catalogue-error {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.75rem;
+  color: var(--color-error, #c0392b);
+}
+
+/* "Awaiting review" note */
+.cell-catalogue-awaiting {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.75rem;
+  color: var(--color-muted, #888);
+}
+
+/* Keep the Request / Resubmit button text on one line */
+.action-btn--request {
+  white-space: nowrap;
+}
+
+/* Org Skills — tighter column widths so the table fits a laptop screen */
+.cell-category {
+  white-space: nowrap;
+  width: 110px;
+  min-width: 90px;
+}
+
+/* ── Bulk catalogue selection ────────────────────────────────────────────── */
+
+/* Checkbox column — compact, vertically centred */
+.cell-checkbox {
+  width: 36px;
+  min-width: 36px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+/* Bulk action bar — appears above the table when items are present */
+.bulk-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--color-accent-bg, rgb(198 93 50 / 8%));
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.bulk-action-count {
+  font-size: 0.875rem;
+  color: var(--color-muted);
+  flex: 1;
 }
 
 /* Confidence pills */

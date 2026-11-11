@@ -1,5 +1,5 @@
 
-
+from ast import alias
 import json
 import os
 from typing import Any
@@ -80,17 +80,19 @@ Rules:
 3. Write a short catalogue-style description, ideally 2-6 words.
    Do not write full sentences or lengthy explanations.
 4. Select exactly one category from the supplied allowed categories.
-
 5. Generate aliases ONLY when they are genuine alternative names
    for the exact same skill.
 
-6. Valid aliases include:
+6. The canonical skill name MUST always be included as the
+   FIRST element in the aliases list.
+
+7. Valid additional aliases include:
    - Common abbreviations (Python -> Py)
    - Established alternative names
    - Widely recognized equivalent naming conventions
    - Genuine spelling or naming variants
 
-7. NEVER generate aliases that describe:
+8. NEVER generate aliases that describe:
    - Activities performed using the skill
    - Applications or use cases of the skill
    - Related technologies
@@ -98,16 +100,11 @@ Rules:
    - Job roles or professional activities
    - Broader or narrower concepts
 
-8. For example, if the canonical skill is Python:
-   Valid aliases: ["Py"]
-   Invalid aliases:
-   ["Python scripting", "Python development",
-    "Python coding", "Python software engineering",
-    "Python programming"]
+9. Do not include proficiency levels such as beginner,
+   intermediate, advanced, expert or professional.
 
-9. Do not include the canonical name itself as an alias.
-10. Do not include proficiency levels such as beginner,
-    intermediate, advanced, expert or professional.
+10. Do not treat version numbers as separate skills unless
+    the version represents a genuinely distinct technology.
 11. Do not treat version numbers as separate skills unless
     the version represents a genuinely distinct technology.
 12. Do not assume embedding candidates are correct.
@@ -250,10 +247,7 @@ Return JSON only.
         if not isinstance(aliases, list):
             raise ValueError("Aliases must be a list.")
 
-        if len(aliases) > 8:
-            raise ValueError("Maximum of 8 aliases allowed.")
-
-        cleaned_aliases = []
+        cleaned_aliases = [name]
         seen = {name.casefold()}
 
         for alias in aliases:
@@ -270,6 +264,9 @@ Return JSON only.
 
             seen.add(alias.casefold())
             cleaned_aliases.append(alias)
+
+            if len(cleaned_aliases) >= 8:
+                break
 
         return {
             "name": name,

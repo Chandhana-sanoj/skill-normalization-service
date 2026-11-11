@@ -52,6 +52,17 @@ class VectorSearcher:
         )
         print("BGE-base model loaded successfully.")
 
+
+    def make_embedding(self, text: str) -> list[float]:
+        """Generate a normalized embedding for a skill."""
+        embedding = self.model.encode(
+            text,
+            normalize_embeddings=True,
+        )
+
+        return embedding.tolist()
+
+
     def search(
         self,
         text: str,

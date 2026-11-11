@@ -23,6 +23,7 @@ from app.core.config import DB_CONFIG
 #   3  raw_skill
 #   4  normalized_skill
 #   5  category
+#   6  review_status
 
 _SELECT_COLS = """
     id,
@@ -30,7 +31,8 @@ _SELECT_COLS = """
     description,
     COALESCE(raw_skill,        name)  AS raw_skill,
     COALESCE(normalized_skill, name)  AS normalized_skill,
-    COALESCE(category, '')            AS category
+    COALESCE(category, '')            AS category,
+    COALESCE(review_status, 'not_submitted') AS review_status
 """
 
 
@@ -42,13 +44,14 @@ class OrganizationSkillRepository:
 
     @staticmethod
     def _row_to_dict(row: tuple) -> dict:
-        skill_id, name, description, raw_skill, normalized_skill, category = row
+        skill_id, name, description, raw_skill, normalized_skill, category, review_status = row
         return {
             "id":              skill_id,
             "rawSkill":        raw_skill or name or "",
             "normalizedSkill": normalized_skill or name or "",
             "category":        category or "",
             "description":     description or "",
+            "reviewStatus":    review_status or "not_submitted",
         }
 
     # â”€â”€ Read â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -363,3 +366,179 @@ class OrganizationSkillRepository:
                 for alias in cleaned:
                     cur.execute(insert_query, (skill_id, alias))
             conn.commit()
+
+    # Statuses that represent a submitted catalogue request.
+    # 'not_submitted' is explicitly excluded from the review queue at all times.
+    SUBMITTED_STATUSES = ("pending", "approved", "rejected")
+
+    def list_for_review(
+        self,
+        search: str = "",
+        status_filter: str = "",
+        page: int = 1,
+        limit: int = 25,
+    ) -> tuple[list[dict], int]:
+        """List org skills that have been submitted for catalogue review.
+
+        Always excludes 'not_submitted' records regardless of the status_filter
+        argument.  This is enforced in SQL, not just in the application layer.
+
+        status_filter: one of 'pending', 'approved', 'rejected', or '' for all
+        submitted records.  Any other value is silently treated as '' (all).
+        """
+        # Always exclude not_submitted at the SQL level.
+        base_where = "WHERE os.review_status != 'not_submitted'"
+        params: list = []
+
+        if search.strip():
+            base_where += """ AND (
+                LOWER(COALESCE(os.raw_skill, os.name)) LIKE %s
+                OR LOWER(COALESCE(os.normalized_skill, os.name)) LIKE %s
+                OR LOWER(o.name) LIKE %s
+            )"""
+            v = f"%{search.strip().lower()}%"
+            params.extend([v, v, v])
+
+        # Only allow submitted-status filters; silently reject anything else.
+        if status_filter and status_filter in self.SUBMITTED_STATUSES:
+            base_where += " AND os.review_status = %s"
+            params.append(status_filter)
+
+        count_q = f"""
+            SELECT COUNT(*) FROM organization_skill os
+            JOIN organization o ON o.id = os.organization_id
+            {base_where};
+        """
+        list_q = f"""
+            SELECT
+                os.id,
+                os.organization_id,
+                o.name AS organization_name,
+                COALESCE(os.raw_skill, os.name) AS raw_skill,
+                COALESCE(os.normalized_skill, os.name) AS normalized_skill,
+                os.description,
+                os.category,
+                os.review_status,
+                COALESCE(
+                    JSON_AGG(
+                        JSON_BUILD_OBJECT('id', osa.id, 'alias', osa.alias)
+                        ORDER BY osa.alias
+                    ) FILTER (WHERE osa.id IS NOT NULL),
+                    '[]'::json
+                ) AS aliases
+            FROM organization_skill os
+            JOIN organization o ON o.id = os.organization_id
+            LEFT JOIN organization_skill_alias osa
+                ON osa.organization_skill_id = os.id
+            {base_where}
+            GROUP BY os.id, os.organization_id, o.name,
+                     os.raw_skill, os.normalized_skill, os.name,
+                     os.description, os.category, os.review_status
+            ORDER BY os.id DESC
+            LIMIT %s OFFSET %s;
+        """
+        offset = (page - 1) * limit
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(count_q, params)
+                total = cur.fetchone()[0]
+                cur.execute(list_q, params + [limit, offset])
+                rows = cur.fetchall()
+        items = [
+            {
+                "id": row[0],
+                "organizationId": row[1],
+                "organizationName": row[2],
+                "rawSkill": row[3],
+                "normalizedSkill": row[4],
+                "description": row[5],
+                "category": row[6],
+                "reviewStatus": row[7],
+                "aliases": row[8] if row[8] else [],
+            }
+            for row in rows
+        ]
+        return items, total
+
+    def set_review_status(self, skill_id: int, status: str) -> bool:
+        """Set the review_status of an organization skill."""
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE organization_skill
+                       SET review_status = %s
+                       WHERE id = %s
+                       RETURNING id;""",
+                    (status, skill_id),
+                )
+                return cur.fetchone() is not None
+
+    def request_catalogue_addition(
+        self,
+        organization_id: int,
+        skill_id: int,
+    ) -> dict:
+        """Submit an org skill for Super Admin review.
+
+        Allowed transitions:
+          not_submitted -> pending
+          rejected      -> pending
+
+        Returns a dict with 'success' bool and 'message' string.
+        Raises ValueError if the skill does not exist in this org or is
+        already pending/approved.
+        """
+        ALLOWED_FROM = ("not_submitted", "rejected")
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                # Verify ownership and fetch current status
+                cur.execute(
+                    """SELECT id, review_status
+                       FROM organization_skill
+                       WHERE id = %s AND organization_id = %s;""",
+                    (skill_id, organization_id),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    raise ValueError("Skill not found in your organization")
+
+                current_status = row[1]
+                if current_status == "pending":
+                    raise ValueError("This skill has already been submitted and is awaiting review")
+                if current_status == "approved":
+                    raise ValueError("This skill has already been approved")
+                if current_status not in ALLOWED_FROM:
+                    raise ValueError(f"Cannot submit skill with status: {current_status}")
+
+                cur.execute(
+                    """UPDATE organization_skill
+                       SET review_status = 'pending'
+                       WHERE id = %s AND organization_id = %s
+                       RETURNING id;""",
+                    (skill_id, organization_id),
+                )
+                updated = cur.fetchone()
+            conn.commit()
+
+        return {
+            "success": updated is not None,
+            "previousStatus": current_status,
+            "newStatus": "pending",
+        }
+
+    def get_by_id_for_org(
+        self,
+        organization_id: int,
+        skill_id: int,
+    ) -> dict | None:
+        """Return a single org skill dict (with review_status) or None."""
+        query = f"""
+            SELECT {_SELECT_COLS}
+            FROM organization_skill
+            WHERE id = %s AND organization_id = %s;
+        """
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (skill_id, organization_id))
+                row = cur.fetchone()
+        return self._row_to_dict(row) if row else None

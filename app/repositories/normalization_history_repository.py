@@ -134,3 +134,83 @@ class NormalizationHistoryRepository:
         ]
 
         return items, total
+
+    def list_all(
+        self,
+        search: str = "",
+        status: str = "",
+        page: int = 1,
+        limit: int = 25,
+    ) -> tuple[list[dict], int]:
+
+        base_where = "WHERE 1=1"
+        params = []
+
+        if search.strip():
+            base_where += """
+                AND (
+                    LOWER(nh.input_skill) LIKE %s
+                    OR LOWER(nh.normalized_skill) LIKE %s
+                    OR LOWER(o.name) LIKE %s
+                )
+            """
+            search_value = f"%{search.strip().lower()}%"
+            params.extend([search_value, search_value, search_value])
+
+        if status:
+            base_where += " AND nh.status = %s"
+            params.append(status)
+
+        count_query = f"""
+            SELECT COUNT(*)
+            FROM normalization_history nh
+            LEFT JOIN organization o ON o.id = nh.organization_id
+            {base_where};
+        """
+
+        list_query = f"""
+            SELECT
+                nh.id,
+                nh.organization_id,
+                o.name AS organization_name,
+                nh.input_skill,
+                nh.normalized_skill,
+                nh.version,
+                nh.description,
+                nh.category,
+                nh.status,
+                nh.created_at
+            FROM normalization_history nh
+            LEFT JOIN organization o ON o.id = nh.organization_id
+            {base_where}
+            ORDER BY nh.created_at DESC
+            LIMIT %s OFFSET %s;
+        """
+
+        offset = (page - 1) * limit
+
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(count_query, params)
+                total = cur.fetchone()[0]
+
+                cur.execute(list_query, params + [limit, offset])
+                rows = cur.fetchall()
+
+        items = [
+            {
+                "id": row[0],
+                "organizationId": row[1],
+                "organizationName": row[2],
+                "inputSkill": row[3],
+                "normalizedSkill": row[4],
+                "version": row[5],
+                "description": row[6],
+                "category": row[7],
+                "status": row[8],
+                "createdAt": row[9].isoformat() if row[9] else None,
+            }
+            for row in rows
+        ]
+
+        return items, total

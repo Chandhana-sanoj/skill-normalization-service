@@ -1,4 +1,4 @@
-﻿"""API routes for managing organization-specific skills."""
+"""API routes for managing organization-specific skills."""
 
 import psycopg
 
@@ -28,7 +28,7 @@ router = APIRouter(
 # â”€â”€ Request schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class OrganizationSkillRequest(BaseModel):
-    raw_skill:        str        = Field(..., min_length=1, max_length=300)
+    raw_skill:        str | None = Field(default=None, max_length=300)
     normalized_skill: str        = Field(..., min_length=1, max_length=300)
     category:         str | None = Field(default=None, max_length=150)
     description:      str        = Field(..., min_length=1, max_length=2000)
@@ -36,7 +36,7 @@ class OrganizationSkillRequest(BaseModel):
 
 
 class PromoteUnresolvedRequest(BaseModel):
-    raw_skill:        str        = Field(..., min_length=1, max_length=300)
+    raw_skill:        str | None = Field(default=None, max_length=300)
     normalized_skill: str        = Field(..., min_length=1, max_length=300)
     category:         str | None = Field(default=None, max_length=150)
     description:      str | None = Field(default=None, max_length=2000)
@@ -50,9 +50,7 @@ def _get_categories(request: Request) -> list[str]:
     return sorted({v for v in category_map.values() if v})
 
 
-def _validate_fields(raw_skill: str, normalized_skill: str) -> None:
-    if not raw_skill:
-        raise HTTPException(status_code=422, detail="Raw skill cannot be empty")
+def _validate_fields(normalized_skill: str) -> None:
     if not normalized_skill:
         raise HTTPException(status_code=422, detail="Normalized skill cannot be empty")
 
@@ -68,7 +66,7 @@ def _skill_response(skill_id: int, organization_id: int, payload, message: str) 
     return {
         "id":              skill_id,
         "organization_id": organization_id,
-        "rawSkill":        payload.raw_skill.strip(),
+        "rawSkill":        (payload.raw_skill or payload.normalized_skill).strip(),
         "normalizedSkill": payload.normalized_skill.strip(),
         "category":        payload.category or "",
         "description":     payload.description or "",
@@ -141,9 +139,9 @@ def create_organization_skill(
     require_org_admin(current_user)
     organization_id = current_user["organization_id"]
 
-    raw_skill        = payload.raw_skill.strip()
+    raw_skill        = (payload.raw_skill or payload.normalized_skill).strip()
     normalized_skill = payload.normalized_skill.strip()
-    _validate_fields(raw_skill, normalized_skill)
+    _validate_fields(normalized_skill)
 
     repo = OrganizationSkillRepository()
 
@@ -183,9 +181,9 @@ def update_organization_skill(
     require_org_admin(current_user)
     organization_id = current_user["organization_id"]
 
-    raw_skill        = payload.raw_skill.strip()
+    raw_skill        = (payload.raw_skill or payload.normalized_skill).strip()
     normalized_skill = payload.normalized_skill.strip()
-    _validate_fields(raw_skill, normalized_skill)
+    _validate_fields(normalized_skill)
 
     repo = OrganizationSkillRepository()
 
@@ -261,9 +259,9 @@ def promote_unresolved_to_org_skill(
     require_org_admin(current_user)
     organization_id = current_user["organization_id"]
 
-    raw_skill        = payload.raw_skill.strip()
+    raw_skill        = (payload.raw_skill or payload.normalized_skill).strip()
     normalized_skill = payload.normalized_skill.strip()
-    _validate_fields(raw_skill, normalized_skill)
+    _validate_fields(normalized_skill)
 
     repo = OrganizationSkillRepository()
 
@@ -323,3 +321,111 @@ def promote_unresolved_to_org_skill(
             "Skill added to your organization and removed from the unresolved queue."
         ),
     }
+
+
+
+# -- Request Catalogue Addition -------------------------------------------------
+
+@router.post("/me/skills/{skill_id}/request-catalogue", status_code=200)
+def request_catalogue_addition(
+    skill_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """Submit an organization skill for Super Admin review.
+
+    Only org_admin users may submit. Allowed transitions:
+      not_submitted -> pending
+      rejected      -> pending
+
+    pending and approved skills cannot be re-submitted.
+    Org isolation is enforced: users can only submit skills in their own org.
+    """
+    require_org_admin(current_user)
+    organization_id = current_user["organization_id"]
+
+    repo = OrganizationSkillRepository()
+    try:
+        result = repo.request_catalogue_addition(
+            organization_id=organization_id,
+            skill_id=skill_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    return {
+        "message": "Skill submitted for catalogue review",
+        "skill_id": skill_id,
+        "reviewStatus": result["newStatus"],
+    }
+
+    def list_all_organizations(self) -> list[dict]:
+        """Return all organizations with user and skill counts."""
+        query = """
+            SELECT
+                o.id,
+                o.name,
+                o.is_active,
+                o.deleted_at,
+                (
+                    SELECT COUNT(*)
+                    FROM organization_user ou
+                    WHERE ou.organization_id = o.id
+                ) AS user_count,
+                (
+                    SELECT COUNT(*)
+                    FROM organization_skill os
+                    WHERE os.organization_id = o.id
+                ) AS skill_count
+            FROM organization o
+            ORDER BY o.id DESC;
+        """
+
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(query)
+                rows = cur.fetchall()
+
+        return [
+            {
+                "id": row[0],
+                "name": row[1],
+                "is_active": row[2],
+                "deleted_at": row[3].isoformat() if row[3] else None,
+                "user_count": row[4],
+                "skill_count": row[5],
+            }
+            for row in rows
+        ]
+
+    def update_organization_status(
+        self,
+        organization_id: int,
+        is_active: bool,
+    ) -> bool:
+        """Activate or deactivate an organization."""
+        query = """
+            UPDATE organization
+            SET is_active = %s
+            WHERE id = %s
+            AND deleted_at IS NULL;
+        """
+
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (is_active, organization_id))
+                return cur.rowcount > 0
+
+    def soft_delete_organization(self, organization_id: int) -> bool:
+        """Soft-delete an organization without removing its records."""
+        query = """
+            UPDATE organization
+            SET is_active = FALSE,
+                deleted_at = NOW()
+            WHERE id = %s
+            AND deleted_at IS NULL;
+        """
+
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (organization_id,))
+                return cur.rowcount > 0

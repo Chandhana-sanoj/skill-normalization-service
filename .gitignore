@@ -33,3 +33,9 @@ Thumbs.db
 # Database backups
 backups/
 
+
+# Docker deployment archives
+*.tar
+
+# Local frontend backup
+frontend-admin/

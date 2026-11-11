@@ -109,3 +109,125 @@ class OrganizationRepository:
             with conn.cursor() as cur:
                 cur.execute(query, (organization_id, user_id))
                 return cur.rowcount > 0
+
+    def list_all_organizations(self) -> list[dict]:
+
+        query = """
+
+            SELECT
+
+                o.id,
+
+                o.name,
+
+                o.is_active,
+
+                o.deleted_at,
+
+                COUNT(DISTINCT ou.id) AS user_count,
+
+                COUNT(DISTINCT os.id) AS skill_count
+
+            FROM organization o
+
+            LEFT JOIN organization_user ou ON ou.organization_id = o.id
+
+            LEFT JOIN organization_skill os ON os.organization_id = o.id
+
+            WHERE o.deleted_at IS NULL
+
+            GROUP BY o.id, o.name, o.is_active, o.deleted_at
+
+            ORDER BY o.id DESC;
+
+        """
+
+
+
+        with psycopg.connect(**self.db_config) as conn:
+
+            with conn.cursor() as cur:
+
+                cur.execute(query)
+
+                rows = cur.fetchall()
+
+
+
+        return [
+
+            {
+
+                "id": row[0],
+
+                "name": row[1],
+
+                "is_active": row[2],
+
+                "deleted_at": row[3].isoformat() if row[3] else None,
+
+                "user_count": row[4],
+
+                "skill_count": row[5],
+
+            }
+
+            for row in rows
+
+        ]
+
+
+
+    def update_organization_status(self, organization_id: int, is_active: bool) -> bool:
+
+        query = """
+
+            UPDATE organization
+
+            SET is_active = %s
+
+            WHERE id = %s
+
+              AND deleted_at IS NULL
+
+            RETURNING id;
+
+        """
+
+
+
+        with psycopg.connect(**self.db_config) as conn:
+
+            with conn.cursor() as cur:
+
+                cur.execute(query, (is_active, organization_id))
+
+                return cur.fetchone() is not None
+
+
+
+    def soft_delete_organization(self, organization_id: int) -> bool:
+
+        query = """
+
+            UPDATE organization
+
+            SET deleted_at = NOW()
+
+            WHERE id = %s
+
+              AND deleted_at IS NULL
+
+            RETURNING id;
+
+        """
+
+
+
+        with psycopg.connect(**self.db_config) as conn:
+
+            with conn.cursor() as cur:
+
+                cur.execute(query, (organization_id,))
+
+                return cur.fetchone() is not None

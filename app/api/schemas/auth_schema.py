@@ -45,3 +45,21 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class UnifiedLoginResponse(BaseModel):
+    """
+    Response from the unified login endpoint.
+
+    ``user_type`` identifies the authenticated account type so the frontend
+    can route the user to the correct dashboard without inspecting the JWT.
+
+    Possible values:
+    - ``"super_admin"``  — a Super Admin account
+    - ``"org_admin"``    — an Organisation Admin (role == org_admin in organization_user)
+    - ``"org_user"``     — a regular Organisation User
+    """
+
+    access_token: str
+    token_type: str = "bearer"
+    user_type: str  # "super_admin" | "org_admin" | "org_user"

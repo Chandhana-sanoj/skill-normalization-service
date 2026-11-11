@@ -192,3 +192,57 @@ class UnresolvedSkillRepository:
                     (Jsonb(suggestion), unresolved_id, organization_id),
                 )
                 return cur.rowcount > 0
+
+    def list_all(
+        self,
+        search: str = "",
+        page: int = 1,
+        limit: int = 25,
+    ) -> tuple[list[dict], int]:
+
+        base_where = "WHERE 1=1"
+        params = []
+
+        if search.strip():
+            base_where += " AND (LOWER(us.input) LIKE %s OR LOWER(o.name) LIKE %s)"
+            search_value = f"%{search.strip().lower()}%"
+            params.extend([search_value, search_value])
+
+        count_query = f"""
+            SELECT COUNT(*)
+            FROM unresolved_skill us
+            LEFT JOIN organization o ON o.id = us.organization_id
+            {base_where};
+        """
+
+        list_query = f"""
+            SELECT us.id, us.organization_id, o.name AS organization_name, us.input, us.suggestion
+            FROM unresolved_skill us
+            LEFT JOIN organization o ON o.id = us.organization_id
+            {base_where}
+            ORDER BY us.id DESC
+            LIMIT %s OFFSET %s;
+        """
+
+        offset = (page - 1) * limit
+
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(count_query, params)
+                total = cur.fetchone()[0]
+
+                cur.execute(list_query, params + [limit, offset])
+                rows = cur.fetchall()
+
+        items = [
+            {
+                "id": row[0],
+                "organizationId": row[1],
+                "organizationName": row[2],
+                "rawSkill": row[3],
+                "suggestion": row[4],
+            }
+            for row in rows
+        ]
+
+        return items, total
