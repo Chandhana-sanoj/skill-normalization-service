@@ -2,7 +2,7 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
-VERSION_TOKEN = r"v?\d+(?:\.\d+){0,2}[xX]?\+?"
+VERSION_TOKEN = r"(?:v?\d+(?:\.\d+){0,2}[xX]?\+?|#\d+(?:\.\d+){0,2})"
 VERSION_RE = re.compile(rf"^{VERSION_TOKEN}(?:/{VERSION_TOKEN})*$", re.IGNORECASE)
 NUMERIC_RE = re.compile(r"^v?\d+(?:\.\d+)*\+?(?:/v?\d+(?:\.\d+)*\+?)*$", re.IGNORECASE)
 PAREN_VERSION_RE = re.compile(
@@ -14,6 +14,25 @@ PAREN_GROUP_RE = re.compile(r"\(([^()]*)\)")
 EDGE_PUNCT = "()[]{}<>\"'\u2022*:;!?-\u2013\u2014"
 DELIMS = ",;|\n"
 
+NOISE_WORDS = {
+    "latest",
+    "newest",
+}
+
+NOISE_TOKEN_RE = re.compile(
+    r"^(?:"
+    r"\d+(?:\.\d+)*"
+    r"|"
+    r"[a-z]\s*=\s*[a-z0-9]+"
+    r"|"
+    r"\d+\s*=\s*\d+"
+    r"|"
+    r"#+"
+    r"|"
+    r"=+"
+    r")$",
+    re.IGNORECASE,
+)
 
 @dataclass
 class Candidate:
@@ -91,13 +110,14 @@ class MultiSkillExtractor:
     r")\s+",
     re.IGNORECASE,
 )
-
+    
     def __init__(self, alias_map, canonical_map, ambiguous_names=None, max_segment_words=15):
         self.ambiguous_names = {n.lower() for n in (ambiguous_names or self.DEFAULT_AMBIGUOUS)}
         self.max_segment_words = max_segment_words
         self.proficiency_words = set(self.PROFICIENCY)
         self.generic_words = set(self.GENERIC)
         self.connectors = set(self.CONNECTORS)
+        self.noise_words = set(NOISE_WORDS)
 
         self.lookup = {}
         for alias, ids in alias_map.items():
@@ -134,6 +154,16 @@ class MultiSkillExtractor:
     @staticmethod
     def _join(keys):
         return " ".join(" ".join(keys).split())
+    
+    def _is_noise_token(self, token):
+        token = token.strip()
+
+        return (
+            not token
+            or token.lower() in self.noise_words
+            or token.lower() == "version"
+            or bool(NOISE_TOKEN_RE.fullmatch(token))
+        )
 
     @staticmethod
     def _format_version(raw_version):
@@ -227,19 +257,41 @@ class MultiSkillExtractor:
                     continue
                 elems.append(_Element("hit", text=self._join(keys[start:end]), skill_id=skill_id))
                 accepted += 1
+            elif (
+                elems
+                and elems[-1].kind == "hit"
+                and elems[-1].version is None
+                and keys[start].lower() == "version"
+                and start + 1 < len(keys)
+                and VERSION_RE.fullmatch(keys[start + 1])
+            ):
+                # Ignore the word "version" and let the next token attach.
+                continue
+
             elif self._takes_version(elems, keys[start]):
                 version = self._format_version(keys[start])
                 elems[-1].version = version
-                elems[-1].text = f"{elems[-1].text} {version}"
+
             else:
                 elems.append(_Element("word", key=keys[start]))
         return elems, accepted
 
     def _unmatched_candidates(self, keys):
-        """No skill matched: pass the text on unless it is only filler, connectors or numbers."""
+        """Pass genuine unknown skills forward, but ignore noise."""
+
         skip = self.connectors | self.filler_words
-        meaningful = [k for k in keys if k and k.lower() not in skip and not NUMERIC_RE.match(k)]
-        return [Candidate(self._join(keys), None)] if meaningful else []
+
+        meaningful = [
+            k for k in keys
+            if k
+            and k.lower() not in skip
+            and not self._is_noise_token(k)
+            and not NUMERIC_RE.fullmatch(k)
+        ]
+
+        return [
+            Candidate(self._join(meaningful), None)
+        ] if meaningful else []
 
     def _split_runs(self, elems):
         """Connector words separate runs of elements."""
@@ -309,7 +361,11 @@ class MultiSkillExtractor:
 
         lefts = [e for e in run if e.kind == "word" and e.key and not NUMERIC_RE.match(e.key)
                  and e.key.lower() not in self.proficiency_words]
-        meaningful = {id(e) for e in lefts if e.key.lower() not in self.generic_words}
+        meaningful = {
+            id(e) for e in lefts
+            if e.key.lower() not in self.generic_words
+            and not self._is_noise_token(e.key)
+        }
 
         if not hits:
             toks = [e.key for e in lefts if id(e) in meaningful]
@@ -457,8 +513,13 @@ class MultiSkillExtractor:
                     continue
                 seen.add(key)
                 results.append(cand)
-        if not results:                                   # never drop input
-            results.append(Candidate(text.strip(), None))
+        if not results:
+            fallback_keys = [
+                self._clean(token)
+                for token in text.split()
+            ]
+
+            results.extend(self._unmatched_candidates(fallback_keys))
         return results
 
     def extract(self, text):
