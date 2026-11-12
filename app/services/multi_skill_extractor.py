@@ -2,7 +2,7 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
-VERSION_TOKEN = r"v?\d+(?:\.\d+){0,2}\+?"
+VERSION_TOKEN = r"v?\d+(?:\.\d+){0,2}[xX]?\+?"
 VERSION_RE = re.compile(rf"^{VERSION_TOKEN}(?:/{VERSION_TOKEN})*$", re.IGNORECASE)
 NUMERIC_RE = re.compile(r"^v?\d+(?:\.\d+)*\+?(?:/v?\d+(?:\.\d+)*\+?)*$", re.IGNORECASE)
 PAREN_VERSION_RE = re.compile(
