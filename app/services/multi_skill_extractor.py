@@ -260,6 +260,20 @@ class MultiSkillExtractor:
         if whole:
             return [whole]
 
+        # Handle compact skill-version inputs such as py3.1 and Py3x.
+        compact = self._normalize(seg)
+
+        for alias in sorted(self.lookup, key=len, reverse=True):
+            if " " in alias:
+                continue
+
+            if compact.startswith(alias) and len(compact) > len(alias):
+                remaining = compact[len(alias):]
+
+                if VERSION_RE.fullmatch(remaining):
+                    seg = f"{alias} {remaining}"
+                    break
+        
         # Remove introductory wording only when the remaining text
         # contains at least one catalogue-recognized skill.
         intro_match = self.INTRO_PREFIX_RE.match(seg)
