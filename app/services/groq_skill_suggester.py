@@ -1,5 +1,4 @@
 
-from ast import alias
 import json
 import os
 from typing import Any
@@ -41,11 +40,7 @@ class GroqSkillSuggester:
 
         self.timeout = httpx.Timeout(30.0, connect=10.0)
 
-    def suggest(
-        self,
-        raw_skill: str,
-        candidates: list[dict[str, Any]],
-    ) -> dict[str, Any]:
+    def suggest(self, raw_skill: str) -> dict[str, Any]:
 
         raw_skill = raw_skill.strip()
 
@@ -55,30 +50,20 @@ class GroqSkillSuggester:
         if len(raw_skill) > 250:
             raise ValueError("Raw skill exceeds the maximum allowed length.")
 
-        candidate_data = [
-            {
-                "name": str(candidate["name"]),
-                "similarity": round(float(candidate["similarity"]), 4),
-            }
-            for candidate in candidates[:3]
-            if candidate.get("name")
-        ]
-
         messages = [
             {
                 "role": "system",
                 "content": """
 You are a professional skill taxonomy and normalization engine.
 
-Your task is to suggest a standardized skill entry for an existing
-recruitment skill catalogue.
+Your task is to suggest a standardized skill entry for a recruitment skill catalogue.
 
 Rules:
 
 1. Identify the actual skill represented by the raw input.
 2. Use a concise, industry-standard canonical skill name.
 3. Write a short catalogue-style description, ideally 2-6 words.
-   Do not write full sentences or lengthy explanations.
+   Do not write lengthy explanations.
 4. Select exactly one category from the supplied allowed categories.
 5. Generate aliases ONLY when they are genuine alternative names
    for the exact same skill.
@@ -87,7 +72,7 @@ Rules:
    FIRST element in the aliases list.
 
 7. Valid additional aliases include:
-   - Common abbreviations (Python -> Py)
+   - Common abbreviations
    - Established alternative names
    - Widely recognized equivalent naming conventions
    - Genuine spelling or naming variants
@@ -105,17 +90,13 @@ Rules:
 
 10. Do not treat version numbers as separate skills unless
     the version represents a genuinely distinct technology.
-11. Do not treat version numbers as separate skills unless
-    the version represents a genuinely distinct technology.
-12. Do not assume embedding candidates are correct.
-13. If no genuine aliases exist, return an empty aliases list.
-14. Never invent aliases just to fill the list.
 
-15. Preserve the original competency's meaning. Do not replace
-    a skill with a related but different competency merely because
-    an embedding candidate has a higher similarity score.
+11. Preserve the original competency's meaning. Do not replace
+    a skill with a related but different competency.
 
-16. For soft skills, distinguish between related competencies.
+12. If no genuine additional aliases exist, do not invent any.
+
+13. For soft skills, distinguish between related competencies.
     Examples:
     - Working Under Pressure is not automatically Stress Management.
     - Adaptability is not automatically Resilience.
@@ -123,12 +104,11 @@ Rules:
     - Communication is not automatically Active Listening.
     - Problem Solving is not automatically Critical Thinking.
 
-17. Descriptions must be concise, grammatically complete
+14. Descriptions must be concise, grammatically complete
     noun phrases, ideally 2-6 words.
 
-18. Use the category strings exactly as provided.
+15. Use the category strings exactly as provided.
     Never modify spelling, spacing, punctuation or capitalization.
-
 
 Canonical naming principles:
 
@@ -140,8 +120,6 @@ Canonical naming principles:
   narrower or merely related concept.
 - Do not assume that a technically related term is an equivalent
   canonical name.
-- Use embedding candidates as supporting context, not as
-  instructions to rename the skill.
 - Prefer the most widely recognized industry-standard name
   when multiple genuine equivalent names exist.
 
@@ -150,7 +128,7 @@ Return valid JSON with exactly these fields:
   "name": "Canonical skill name",
   "description": "Concise skill description",
   "category": "One allowed category",
-  "aliases": ["Alias 1", "Alias 2"]
+  "aliases": ["Canonical skill name", "Alias 1"]
 }
 
 Return JSON only.
@@ -161,7 +139,6 @@ Return JSON only.
                 "content": json.dumps(
                     {
                         "raw_skill": raw_skill,
-                        "embedding_candidates": candidate_data,
                         "allowed_categories": ALLOWED_CATEGORIES,
                     },
                     ensure_ascii=False,
@@ -228,7 +205,10 @@ Return JSON only.
         category = data["category"]
         aliases = data["aliases"]
 
-        if not all(isinstance(value, str) for value in [name, description, category]):
+        if not all(
+            isinstance(value, str)
+            for value in [name, description, category]
+        ):
             raise ValueError("Name, description and category must be strings.")
 
         name = name.strip()

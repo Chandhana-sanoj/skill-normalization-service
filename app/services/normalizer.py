@@ -5,10 +5,11 @@ import re
 import logging
 
 from app.services.groq_skill_suggester import GroqSkillSuggester
+from app.services.duplicate_checker import check_duplicates
 
 _logger = logging.getLogger(__name__)
 
-from app.services.preprocessing import normalize_input
+from app.services.preprocessing import normalize_input, normalize_lookup_key
 from app.services.alias_matcher import AliasMatcher
 from app.services.embedding_matcher import EmbeddingMatcher
 from app.repositories.unresolved_skill_repository import (
@@ -23,6 +24,12 @@ class SkillNormalizer:
     Version extraction belongs to MultiSkillExtractor. This class accepts the
     candidate text and its optional version separately, then performs exact
     matching, embedding fallback, and unresolved-skill storage.
+
+    Resolution order:
+    1. Organisation-specific input mappings  (admin-confirmed duplicates)
+    2. Canonical alias exact match
+    3. Embedding similarity match
+    4. Unresolved (triggers Groq suggestion + duplicate check)
     """
 
     def __init__(  # pylint: disable=too-many-arguments
@@ -33,6 +40,8 @@ class SkillNormalizer:
         organization_id: int,
         description_map,
         category_map,
+        aliases_by_canonical: dict[int, list[str]] | None = None,
+        org_input_mappings: dict[str, int] | None = None,
     ):
         self.matcher = AliasMatcher(
             alias_map=alias_map,
@@ -45,10 +54,17 @@ class SkillNormalizer:
         )
 
         self.organization_id = organization_id
+        self.alias_map = alias_map
         self.canonical_map = canonical_map
         self.description_map = description_map
         self.category_map = category_map
+        self.aliases_by_canonical = aliases_by_canonical or {}
         self.unresolved_repository = UnresolvedSkillRepository()
+
+        # Organisation-specific input mappings: {lower(raw_input): canonical_skill_id}
+        # These are set when an admin resolves a duplicate by selecting an
+        # existing canonical skill. They take precedence over all other matching.
+        self.org_input_mappings: dict[str, int] = org_input_mappings or {}
 
     def get_description(self, canonical_id):
         """Return the description for a canonical skill ID."""
@@ -137,7 +153,27 @@ class SkillNormalizer:
         # that known suffix to obtain the skill name; do not parse it again.
         skill_name = self._remove_supplied_version(cleaned_input, version)
 
-        # Exact match first, protecting names such as HTML5, CSS3, and GPT-4o.
+        # ── 1. Organisation-specific input mapping ───────────────────────────
+        # Check whether an admin has previously resolved this exact input for
+        # this organisation by mapping it to an existing canonical skill.
+        # This takes precedence over catalogue matching so that admin decisions
+        # are always honoured immediately on subsequent normalization requests.
+        mapping_key = normalize_lookup_key(cleaned_input)
+        if mapping_key in self.org_input_mappings:
+            canonical_id = self.org_input_mappings[mapping_key]
+            canonical_name = self.canonical_map.get(canonical_id)
+            if canonical_name:
+                return self._build_result(
+                    cleaned_input,
+                    canonical_name,
+                    version,
+                    self.get_description(canonical_id),
+                    self.get_category(canonical_id),
+                    "matched",
+                )
+
+        # ── 2. Exact alias match ─────────────────────────────────────────────
+        # Protects names such as HTML5, CSS3, and GPT-4o.
         canonical_id = self.matcher.match(skill_name)
 
         if canonical_id is not None:
@@ -151,7 +187,8 @@ class SkillNormalizer:
                 "matched",
             )
 
-                 # Retrieve the top embedding candidates once.
+        # ── 3. Embedding match ───────────────────────────────────────────────
+        # Retrieve the top embedding candidates once.
         embedding_candidates = self.embedding_matcher.get_candidates(
             skill_name,
             top_k=3,
@@ -175,6 +212,7 @@ class SkillNormalizer:
                 "matched",
             )
 
+        # ── 4. Unresolved ────────────────────────────────────────────────────
         # No exact or semantic match: save as unresolved.
         unresolved_id = self.unresolved_repository.save(
             organization_id=self.organization_id,
@@ -187,8 +225,16 @@ class SkillNormalizer:
 
             suggestion = suggester.suggest(
                 raw_skill=skill_name,
-                candidates=embedding_candidates,
             )
+
+            duplicate_check = check_duplicates(
+                suggestion=suggestion,
+                canonical_map=self.canonical_map,
+                alias_map=self.alias_map,
+                aliases_by_canonical=self.aliases_by_canonical,
+            )
+
+            suggestion["duplicate_check"] = duplicate_check
 
             self.unresolved_repository.save_suggestion(
                 organization_id=self.organization_id,

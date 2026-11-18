@@ -101,6 +101,10 @@ export async function createSkill(payload) {
   });
 }
 
+export async function fetchCategories() {
+  return apiRequest("/api/v1/super-admin/skills-categories");
+}
+
 export async function updateSkill(id, payload) {
   return apiRequest(`/api/v1/super-admin/skills/${id}`, {
     method: "PUT",

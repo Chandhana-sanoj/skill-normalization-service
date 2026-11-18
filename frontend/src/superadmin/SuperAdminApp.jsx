@@ -7,6 +7,7 @@ import {
   addSkillAlias, deleteSkillAlias,
   fetchHistory, fetchUnresolved,
   fetchOrgSkillReview, approveOrgSkill, rejectOrgSkill,
+  fetchCategories,
 } from "./client.js";
 import "./SuperAdmin.css";
 
@@ -414,6 +415,176 @@ function ViewAliasesModal({ skill, onClose }) {
   );
 }
 
+/** Add Canonical Skill modal – all 4 fields required; category dropdown; alias chips */
+function AddSkillModal({ onSave, onClose, saving, saveError }) {
+  const [form, setForm] = useState({ name: "", description: "", category: "" });
+  const [aliases, setAliases] = useState([]);
+  const [aliasInput, setAliasInput] = useState("");
+  const [aliasError, setAliasError] = useState(null);
+  const [categories, setCategories] = useState([]);
+  const [catSearch, setCatSearch] = useState("");
+  const [catOpen, setCatOpen] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState({});
+
+  useEffect(() => {
+    fetchCategories().then((d) => setCategories(d.categories ?? [])).catch(() => {});
+  }, []);
+
+  function handleChange(e) {
+    setForm((p) => ({ ...p, [e.target.name]: e.target.value }));
+    setFieldErrors((p) => ({ ...p, [e.target.name]: null }));
+  }
+
+  function addAlias(raw) {
+    const a = raw.trim();
+    if (!a) return;
+    if (aliases.some((x) => x.toLowerCase() === a.toLowerCase())) {
+      setAliasError("Alias already added.");
+      return;
+    }
+    setAliases((p) => [...p, a]);
+    setAliasInput("");
+    setAliasError(null);
+  }
+
+  function handleAliasKeyDown(e) {
+    if (e.key === "Enter") { e.preventDefault(); addAlias(aliasInput); return; }
+    if (e.key === ",") { e.preventDefault(); addAlias(aliasInput); return; }
+  }
+
+  function removeAlias(a) { setAliases((p) => p.filter((x) => x !== a)); }
+
+  function handleSelectCategory(cat) {
+    setForm((p) => ({ ...p, category: cat }));
+    setCatOpen(false);
+    setCatSearch("");
+    setFieldErrors((p) => ({ ...p, category: null }));
+  }
+
+  function validate() {
+    const errs = {};
+    if (!form.name.trim()) errs.name = "Skill name is required.";
+    if (!form.description.trim()) errs.description = "Description is required.";
+    if (!form.category) errs.category = "Category is required.";
+    if (aliases.length === 0) errs.aliases = "At least one alias is required.";
+    setFieldErrors(errs);
+    return Object.keys(errs).length === 0;
+  }
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    if (!validate()) return;
+    const name = form.name.trim();
+    const finalAliases = [...aliases];
+    if (!finalAliases.some((a) => a.toLowerCase() === name.toLowerCase())) {
+      finalAliases.unshift(name);
+    }
+    onSave({ name, description: form.description.trim(), category: form.category, aliases: finalAliases });
+  }
+
+  const filteredCats = catSearch
+    ? categories.filter((c) => c.toLowerCase().includes(catSearch.toLowerCase()))
+    : categories;
+
+  return (
+    <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }} role="dialog" aria-modal="true">
+      <div className="modal-card modal-card--wide">
+        <div className="modal-header"><h2 className="modal-title">Add Canonical Skill</h2><button className="modal-close" onClick={onClose}>&#x2715;</button></div>
+        {saveError && <div className="modal-error" role="alert">{saveError}</div>}
+        <form className="modal-form" onSubmit={handleSubmit} noValidate>
+
+          <div className="form-field">
+            <label>Skill Name <span className="required">*</span></label>
+            <input name="name" type="text" value={form.name} onChange={handleChange} placeholder="e.g. Python" />
+            {fieldErrors.name && <span className="field-error">{fieldErrors.name}</span>}
+          </div>
+
+          <div className="form-field">
+            <label>Description <span className="required">*</span></label>
+            <textarea name="description" rows={3} value={form.description} onChange={handleChange} placeholder="Concise description of the skill..." />
+            {fieldErrors.description && <span className="field-error">{fieldErrors.description}</span>}
+          </div>
+
+          <div className="form-field" style={{ position: "relative" }}>
+            <label>Category <span className="required">*</span></label>
+            <div
+              className="add-skill-cat-trigger"
+              tabIndex={0}
+              onClick={() => setCatOpen((o) => !o)}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setCatOpen((o) => !o); } }}
+            >
+              {form.category || <span style={{ color: "var(--color-muted, #9a9a9a)" }}>Select a category...</span>}
+              <span style={{ marginLeft: "auto", opacity: 0.5, fontSize: 11 }}>&#9660;</span>
+            </div>
+            {catOpen && (
+              <div className="add-skill-cat-dropdown">
+                <input
+                  className="add-skill-cat-search"
+                  type="text"
+                  placeholder="Search categories..."
+                  value={catSearch}
+                  onChange={(e) => setCatSearch(e.target.value)}
+                  autoFocus
+                  onClick={(e) => e.stopPropagation()}
+                />
+                <div className="add-skill-cat-list">
+                  {filteredCats.length === 0
+                    ? <div className="add-skill-cat-empty">No categories found.</div>
+                    : filteredCats.map((c) => (
+                      <div
+                        key={c}
+                        className={`add-skill-cat-option${form.category === c ? " add-skill-cat-option--selected" : ""}`}
+                        onClick={() => handleSelectCategory(c)}
+                      >{c}</div>
+                    ))
+                  }
+                </div>
+              </div>
+            )}
+            {fieldErrors.category && <span className="field-error">{fieldErrors.category}</span>}
+          </div>
+
+          <div className="form-field">
+            <label>Aliases <span className="required">*</span></label>
+            <p style={{ fontSize: 12, color: "var(--color-muted, #9a9a9a)", margin: "0 0 6px" }}>
+              Press Enter or comma to add. The canonical name is automatically included.
+            </p>
+            {aliases.length > 0 && (
+              <div className="alias-list" style={{ marginBottom: 8 }}>
+                {aliases.map((a) => (
+                  <div key={a} className="alias-item">
+                    <span className="alias-chip">{a}</span>
+                    <button type="button" className="alias-remove" onClick={() => removeAlias(a)}>&#x2715;</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {aliasError && <div className="modal-error" style={{ marginBottom: 6 }}>{aliasError}</div>}
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                type="text"
+                value={aliasInput}
+                onChange={(e) => { setAliasInput(e.target.value); setAliasError(null); }}
+                onKeyDown={handleAliasKeyDown}
+                placeholder="Type alias and press Enter..."
+                className="alias-add-input"
+                style={{ flex: 1 }}
+              />
+              <button type="button" className="btn-primary" onClick={() => addAlias(aliasInput)} disabled={!aliasInput.trim()}>Add</button>
+            </div>
+            {fieldErrors.aliases && <span className="field-error">{fieldErrors.aliases}</span>}
+          </div>
+
+          <div className="modal-actions">
+            <button type="button" className="btn-secondary" onClick={onClose} disabled={saving}>Cancel</button>
+            <button type="submit" className="btn-primary" disabled={saving}>{saving ? "Creating..." : "Create Skill"}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 /** Edit modal — fetches full skill with aliases on mount */
 function EditSkillModal({ skill, onSave, onClose, onAliasChange, saving, saveError }) {
   const isEdit = Boolean(skill?.id);
@@ -526,7 +697,7 @@ function SkillsPage() {
     setSaving(true); setSaveError(null);
     try {
       if (skillData.id) { await updateSkill(skillData.id, { name: skillData.name, description: skillData.description, category: skillData.category }); setToast({ message: "Skill updated.", type: "success" }); }
-      else { await createSkill({ name: skillData.name, description: skillData.description, category: skillData.category }); setToast({ message: "Skill created.", type: "success" }); }
+      else { await createSkill({ name: skillData.name, description: skillData.description, category: skillData.category, aliases: skillData.aliases ?? [] }); setToast({ message: "Skill created.", type: "success" }); }
       setModalMode(null); setSelectedSkill(null); load();
     } catch (err) { setSaveError(err.message); }
     finally { setSaving(false); }
@@ -539,8 +710,11 @@ function SkillsPage() {
     <div className="page">
       <Toast message={toast?.message} type={toast?.type} onDismiss={() => setToast(null)} />
       {modalMode === "view" && selectedSkill && <ViewAliasesModal skill={selectedSkill} onClose={() => { setModalMode(null); setSelectedSkill(null); }} />}
-      {(modalMode === "add" || modalMode === "edit") && (
-        <EditSkillModal skill={modalMode === "edit" ? selectedSkill : null} onSave={handleSave} onClose={() => { setModalMode(null); setSelectedSkill(null); setSaveError(null); }} onAliasChange={handleAliasChange} saving={saving} saveError={saveError} />
+      {modalMode === "add" && (
+        <AddSkillModal onSave={handleSave} onClose={() => { setModalMode(null); setSaveError(null); }} saving={saving} saveError={saveError} />
+      )}
+      {modalMode === "edit" && selectedSkill && (
+        <EditSkillModal skill={selectedSkill} onSave={handleSave} onClose={() => { setModalMode(null); setSelectedSkill(null); setSaveError(null); }} onAliasChange={handleAliasChange} saving={saving} saveError={saveError} />
       )}
       <div className="page-header">
         <div><h1 className="page-title">Skill Catalogue</h1><p className="page-subtitle">{loading ? "" : `${total.toLocaleString()} canonical skills`}</p></div>

@@ -1218,6 +1218,173 @@ function AddToOrgSkillsModal({ item, onSave, onClose, saving, saveError, token }
   );
 }
 
+// ── Duplicate-approve modal ───────────────────────────────────────────────────
+/**
+ * DuplicateApproveModal — shown when suggestion.duplicate_check.has_duplicates
+ * is true.
+ *
+ * - duplicate_found: single (or primary) match auto-selected; "Use Existing Skill"
+ * - conflict:        admin picks from multiple matches; "Use Selected Skill"
+ *
+ * onReject lets the admin reject directly from this modal.
+ */
+function DuplicateApproveModal({ item, onApprove, onReject, onClose, saving, saveError }) {
+  const dc = item.suggestion?.duplicate_check || {};
+  const dupStatus = dc.status || "duplicate_found";
+  const matches = Array.isArray(dc.matches) ? dc.matches : [];
+
+  // Deduplicate by canonical_skill_id
+  const uniqueSkills = [];
+  const seenIds = new Set();
+  for (const m of matches) {
+    const id = m.canonical_skill_id;
+    if (id != null && !seenIds.has(id)) {
+      seenIds.add(id);
+      uniqueSkills.push(m);
+    }
+  }
+
+  const isConflict = dupStatus === "conflict";
+
+  // For duplicate_found, auto-select the first match so the button is immediately active.
+  // For conflict, start unselected so admin must consciously choose.
+  const [selectedId, setSelectedId] = useState(
+    !isConflict && uniqueSkills.length > 0 ? uniqueSkills[0].canonical_skill_id : null
+  );
+
+  const bannerCls = isConflict
+    ? "dup-status-banner dup-status-banner--conflict"
+    : "dup-status-banner dup-status-banner--duplicate";
+  const bannerMsg = isConflict
+    ? "Conflict: the generated suggestion matches multiple existing canonical skills. Select the correct one below."
+    : "Duplicate detected: the generated suggestion matches an existing canonical skill.";
+
+  const primaryLabel = isConflict ? "Use Selected Skill" : "Use Existing Skill";
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    if (selectedId == null) return;
+    onApprove({ id: item.id, payload: { canonical_skill_id: selectedId } });
+  }
+
+  function handleRejectClick() {
+    if (onReject) onReject(item);
+    onClose();
+  }
+
+  function handleBackdropClick(e) { if (e.target === e.currentTarget) onClose(); }
+
+  function matchTypeLabel(m) {
+    const parts = [];
+    if (m.match_type === "canonical_name") parts.push("matches canonical name");
+    else if (m.match_type === "alias")     parts.push("matches alias");
+    if (m.matched_value && m.matched_value !== m.canonical_name) {
+      parts.push('via "' + m.matched_value + '"');
+    }
+    if (m.generated_value) {
+      const genType = m.generated_type === "alias" ? "generated alias" : "generated name";
+      parts.push('(' + genType + ': "' + m.generated_value + '")');
+    }
+    return parts.join(" · ");
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={handleBackdropClick} role="dialog" aria-modal="true" aria-label="Review duplicate suggestion">
+      <div className="modal-card modal-card--wide">
+        <div className="modal-header">
+          <h2 className="modal-title">
+            {isConflict ? "Resolve Conflict" : "Duplicate Match Found"}
+          </h2>
+          <button className="modal-close" onClick={onClose} aria-label="Close">✕</button>
+        </div>
+        <div className="resolve-context">
+          <div className="resolve-context-row">
+            <span className="resolve-label">Original input</span>
+            <span className="resolve-value resolve-value--raw">{item.rawSkill}</span>
+          </div>
+          {(item.suggestion?.name || item.suggestion?.normalizedSkill) && (
+            <div className="resolve-context-row">
+              <span className="resolve-label">Generated suggestion</span>
+              <span className="resolve-value">{item.suggestion.name || item.suggestion.normalizedSkill}</span>
+            </div>
+          )}
+        </div>
+        <div className={bannerCls}>{bannerMsg}</div>
+        {saveError && (
+          <div className="modal-error" role="alert">
+            <strong>Could not save.</strong> {saveError}
+          </div>
+        )}
+        <form onSubmit={handleSubmit}>
+          {/* duplicate_found: show the matched skill prominently, no radio needed */}
+          {!isConflict && uniqueSkills.length > 0 && (
+            <div className="dup-match-list">
+              <div className="dup-match-option dup-match-option--selected" style={{ cursor: "default" }}>
+                <div>
+                  <div className="dup-match-name">{uniqueSkills[0].canonical_name}</div>
+                  <div className="dup-match-meta">{matchTypeLabel(uniqueSkills[0])}</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* conflict: radio selection among all distinct matches */}
+          {isConflict && (
+            <>
+              <p style={{ fontSize: "0.875rem", color: "var(--color-muted)", margin: "0 0 10px" }}>
+                Select the canonical skill this input should be mapped to:
+              </p>
+              <div className="dup-match-list">
+                {uniqueSkills.map((m) => (
+                  <label
+                    key={m.canonical_skill_id}
+                    className={"dup-match-option" + (selectedId === m.canonical_skill_id ? " dup-match-option--selected" : "")}
+                  >
+                    <input
+                      type="radio"
+                      name="dup-canonical"
+                      value={m.canonical_skill_id}
+                      checked={selectedId === m.canonical_skill_id}
+                      onChange={() => setSelectedId(m.canonical_skill_id)}
+                    />
+                    <div>
+                      <div className="dup-match-name">{m.canonical_name}</div>
+                      <div className="dup-match-meta">{matchTypeLabel(m)}</div>
+                    </div>
+                  </label>
+                ))}
+                {uniqueSkills.length === 0 && (
+                  <p className="cell-empty">No matching canonical skills available.</p>
+                )}
+              </div>
+            </>
+          )}
+
+          <div className="modal-actions">
+            <button
+              type="button"
+              className="action-btn action-btn--delete"
+              onClick={handleRejectClick}
+              disabled={saving}
+              style={{ marginRight: "auto" }}
+            >
+              Reject
+            </button>
+            <button type="button" className="btn-secondary" onClick={onClose} disabled={saving}>Cancel</button>
+            <button
+              type="submit"
+              className="btn-primary btn-resolve"
+              disabled={saving || selectedId == null}
+            >
+              {saving ? "Saving…" : primaryLabel}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ── Edit-and-approve modal ────────────────────────────────────────────────────
 /**
  * EditAndApproveModal — lets the admin review and edit a Groq-generated
@@ -1225,6 +1392,7 @@ function AddToOrgSkillsModal({ item, onSave, onClose, saving, saveError, token }
  */
 function EditAndApproveModal({ item, onApprove, onClose, saving, saveError }) {
   const s = item.suggestion || {};
+  const hasDuplicates = Boolean(s.duplicate_check?.has_duplicates);
   const initialName    = s.name        || s.normalizedSkill || "";
   const initialDesc    = s.description || "";
   const initialCat     = s.category    || "";
@@ -1244,6 +1412,7 @@ function EditAndApproveModal({ item, onApprove, onClose, saving, saveError }) {
 
   function handleSubmit(e) {
     e.preventDefault();
+    if (hasDuplicates) return; // blocked — use Approve button instead
     const name = form.name.trim();
     if (!name) { setValidationError("Skill name is required."); return; }
     setValidationError(null);
@@ -1281,6 +1450,12 @@ function EditAndApproveModal({ item, onApprove, onClose, saving, saveError }) {
             <span className="resolve-value resolve-value--raw">{item.rawSkill}</span>
           </div>
         </div>
+        {/* Duplicate warning — editing is not allowed when duplicates are detected */}
+        {hasDuplicates && (
+          <div className="dup-status-banner dup-status-banner--duplicate" role="alert">
+            This suggestion matches an existing canonical skill. Close this modal and use the <strong>Approve</strong> button to select the correct match.
+          </div>
+        )}
         {displayError && (
           <div className="modal-error" role="alert">
             <strong>Could not approve.</strong> {displayError}
@@ -1297,6 +1472,7 @@ function EditAndApproveModal({ item, onApprove, onClose, saving, saveError }) {
               onChange={handleChange}
               placeholder="Canonical skill name"
               required
+              disabled={hasDuplicates}
               autoFocus // eslint-disable-line jsx-a11y/no-autofocus
             />
             <span className="field-hint">The standardised canonical name for this skill.</span>
@@ -1310,6 +1486,7 @@ function EditAndApproveModal({ item, onApprove, onClose, saving, saveError }) {
               value={form.description}
               onChange={handleChange}
               placeholder="Brief description of the skill…"
+              disabled={hasDuplicates}
             />
           </div>
           <div className="form-field">
@@ -1321,6 +1498,7 @@ function EditAndApproveModal({ item, onApprove, onClose, saving, saveError }) {
               value={form.category}
               onChange={handleChange}
               placeholder="e.g. Data Engineering"
+              disabled={hasDuplicates}
             />
           </div>
           <div className="form-field">
@@ -1332,6 +1510,7 @@ function EditAndApproveModal({ item, onApprove, onClose, saving, saveError }) {
               value={form.aliasesText}
               onChange={handleChange}
               placeholder="Comma-separated aliases, e.g. Py, Python 3, CPython"
+              disabled={hasDuplicates}
             />
             <span className="field-hint">Separate multiple aliases with a comma.</span>
           </div>
@@ -1339,7 +1518,7 @@ function EditAndApproveModal({ item, onApprove, onClose, saving, saveError }) {
             <button type="button" className="btn-secondary" onClick={onClose} disabled={saving}>
               Cancel
             </button>
-            <button type="submit" className="btn-primary btn-resolve" disabled={saving || !form.name.trim()}>
+            <button type="submit" className="btn-primary btn-resolve" disabled={saving || !form.name.trim() || hasDuplicates}>
               {saving ? "Approving…" : "Save & Approve"}
             </button>
           </div>
@@ -1388,6 +1567,11 @@ function UnresolvedAdminPage({ session }) {
   const [editApproving, setEditApproving]         = useState(false);
   const [editApproveError, setEditApproveError]   = useState(null);
 
+  // Duplicate-approve modal (when suggestion has has_duplicates: true)
+  const [dupApproveTarget, setDupApproveTarget] = useState(null);
+  const [dupApproving, setDupApproving]         = useState(false);
+  const [dupApproveError, setDupApproveError]   = useState(null);
+
   // Success banner
   const [successMsg, setSuccessMsg] = useState(null);
 
@@ -1417,6 +1601,12 @@ function UnresolvedAdminPage({ session }) {
 
   // ── One-click approve ────────────────────────────────────────────────────────
   async function handleApprove(item) {
+    // If the suggestion has duplicate matches, open the selection modal instead.
+    if (item.suggestion?.duplicate_check?.has_duplicates) {
+      setDupApproveError(null);
+      setDupApproveTarget(item);
+      return;
+    }
     setApproveTarget(item); setApproving(true); setApproveError(null);
     const s = item.suggestion || {};
     const payload = {
@@ -1434,6 +1624,26 @@ function UnresolvedAdminPage({ session }) {
     } finally {
       setApproving(false);
       setApproveTarget(null);
+    }
+  }
+
+  // ── Duplicate-approve ────────────────────────────────────────────────────────
+  async function handleDupApprove({ id, payload }) {
+    setDupApproving(true); setDupApproveError(null);
+    try {
+      const result = await approveUnresolvedSkill({ id, payload, token: session.token });
+      setDupApproveTarget(null);
+      const canonicalName = result?.canonical_name;
+      setSuccessMsg(
+        canonicalName
+          ? `\"${result.raw_skill}" mapped to canonical skill "${canonicalName}".`  
+          : "Input mapped to existing canonical skill."
+      );
+      load();
+    } catch (err) {
+      setDupApproveError(err.message || "Approval failed.");
+    } finally {
+      setDupApproving(false);
     }
   }
 
@@ -1524,6 +1734,7 @@ function UnresolvedAdminPage({ session }) {
                       const s = item.suggestion || {};
                       const suggestedName = s.name || s.normalizedSkill;
                       const hasSuggestion = Boolean(suggestedName);
+                      const hasDuplicates = Boolean(s.duplicate_check?.has_duplicates);
                       const isApprovingThis = approving && approveTarget?.id === item.id;
                       const suggestionAliases = Array.isArray(s.aliases) ? s.aliases : [];
 
@@ -1532,6 +1743,9 @@ function UnresolvedAdminPage({ session }) {
                           <td className="cell-raw">{item.rawSkill}</td>
                           <td className="cell-skill">
                             {suggestedName ?? <span className="cell-empty">No suggestion</span>}
+                            {hasDuplicates && (
+                              <span className="dup-warning-badge" title="Duplicate detected — select matching canonical skill on approval">⚠ Duplicate</span>
+                            )}
                           </td>
                           <td className="cell-description">
                             {s.description
@@ -1547,32 +1761,55 @@ function UnresolvedAdminPage({ session }) {
                             <AliasPopover aliases={suggestionAliases} skillName={suggestedName || item.rawSkill} />
                           </td>
                           <td className="cell-actions">
-                            {hasSuggestion && (
-                              <button
-                                className="action-btn action-btn--resolve"
-                                onClick={() => handleApprove(item)}
-                                disabled={isApprovingThis}
-                                aria-label={`Approve suggestion for ${item.rawSkill}`}
-                              >
-                                {isApprovingThis ? "Approving…" : "Approve"}
-                              </button>
+                            {hasDuplicates ? (
+                              /* Duplicate/conflict: only Review Duplicate + Reject */
+                              <>
+                                <button
+                                  className="action-btn action-btn--edit"
+                                  onClick={() => handleApprove(item)}
+                                  aria-label={"Review duplicate for " + item.rawSkill}
+                                >
+                                  Review Duplicate
+                                </button>
+                                <button
+                                  className="action-btn action-btn--delete"
+                                  onClick={() => handleReject(item)}
+                                  aria-label={"Reject " + item.rawSkill}
+                                >
+                                  Reject
+                                </button>
+                              </>
+                            ) : (
+                              /* No duplicate: normal Approve / Edit / Reject */
+                              <>
+                                {hasSuggestion && (
+                                  <button
+                                    className="action-btn action-btn--resolve"
+                                    onClick={() => handleApprove(item)}
+                                    disabled={isApprovingThis}
+                                    aria-label={"Approve suggestion for " + item.rawSkill}
+                                  >
+                                    {isApprovingThis ? "Approving…" : "Approve"}
+                                  </button>
+                                )}
+                                {hasSuggestion && (
+                                  <button
+                                    className="action-btn action-btn--edit"
+                                    onClick={() => { setEditApproveTarget(item); setEditApproveError(null); }}
+                                    aria-label={"Edit suggestion for " + item.rawSkill}
+                                  >
+                                    Edit
+                                  </button>
+                                )}
+                                <button
+                                  className="action-btn action-btn--delete"
+                                  onClick={() => handleReject(item)}
+                                  aria-label={"Reject " + item.rawSkill}
+                                >
+                                  Reject
+                                </button>
+                              </>
                             )}
-                            {hasSuggestion && (
-                              <button
-                                className="action-btn action-btn--edit"
-                                onClick={() => { setEditApproveTarget(item); setEditApproveError(null); }}
-                                aria-label={`Edit suggestion for ${item.rawSkill}`}
-                              >
-                                Edit
-                              </button>
-                            )}
-                            <button
-                              className="action-btn action-btn--delete"
-                              onClick={() => handleReject(item)}
-                              aria-label={`Reject ${item.rawSkill}`}
-                            >
-                              Reject
-                            </button>
                           </td>
                         </tr>
                       );
@@ -1593,6 +1830,16 @@ function UnresolvedAdminPage({ session }) {
           onClose={() => { setEditApproveTarget(null); setEditApproveError(null); }}
           saving={editApproving}
           saveError={editApproveError}
+        />
+      )}
+      {dupApproveTarget && (
+        <DuplicateApproveModal
+          item={dupApproveTarget}
+          onApprove={handleDupApprove}
+          onReject={handleReject}
+          onClose={() => { setDupApproveTarget(null); setDupApproveError(null); }}
+          saving={dupApproving}
+          saveError={dupApproveError}
         />
       )}
     </div>
@@ -1800,8 +2047,9 @@ function OutputPage({ session, outputCache, setOutputCache }) {
 //
 // Adjust field names above to match your actual API response.
 // ─────────────────────────────────────────────────────────────────────────────
+// ── API helpers ───────────────────────────────────────────────────────────────
 async function normalizeSkill({ skill, token }) {
-  // Backend accepts { "input": "..." } and returns an array of result objects.
+  // POST /api/v1/normalize – returns NormalizationResponse[]
   const data = await apiRequest("/api/v1/normalize", {
     method: "POST",
     token,
@@ -1813,131 +2061,316 @@ async function normalizeSkill({ skill, token }) {
   return data;
 }
 
+async function normalizeBatch({ inputs, token }) {
+  // POST /api/v1/normalize/batch – returns { results: MultiNormalizationItem[] }
+  const data = await apiRequest("/api/v1/normalize/batch", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ inputs }),
+  });
+  if (!data || !Array.isArray(data.results)) {
+    throw new Error("The batch normalization API returned an unexpected response.");
+  }
+  return data.results; // list of { source_index, result: NormalizationResponse }
+}
+
+const UNIFIED_MAX = 500;
+
 function NormalizeSkillPage({ token }) {
-  const [skill, setSkill]               = useState("");
-  const [loading, setLoading]           = useState(false);
-  const [error, setError]               = useState(null);
-  const [result, setResult]             = useState(null);
+  // ── Input state ──────────────────────────────────────────────────────────
+  const [inputText, setInputText]             = useState("");
+  const [loading, setLoading]                 = useState(false);
+  const [error, setError]                     = useState(null);
+  const [results, setResults]                 = useState(null);
+  const [progress, setProgress]               = useState(null);
   const [validationError, setValidationError] = useState(null);
 
+  // ── Parse skills: split on newlines AND commas ───────────────────────────
+  function parseSkills(text) {
+    return text.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+  }
+
+  const skillList  = parseSkills(inputText);
+  const skillCount = skillList.length;
+  const isOver     = skillCount > UNIFIED_MAX;
+
+
+  // ── Export CSV ───────────────────────────────────────────────────────────
+  function exportCsvResults(rows) {
+    const headers = ["Original Input", "Normalized Skill", "Version", "Category", "Status"];
+    const esc     = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const csv     = [headers, ...rows.map((r) => [
+      r._originalInput ?? r.input ?? "",
+      r.skill    ?? "",
+      r.version  ?? "",
+      r.category ?? "",
+      r.status   ?? "",
+    ])].map((row) => row.map(esc).join(",")).join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href     = url;
+    a.download = `normalize-results-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+
+  // ── Submit ───────────────────────────────────────────────────────────────
   async function handleSubmit(e) {
-    e.preventDefault();
-    const trimmed = skill.trim();
-    if (!trimmed) {
-      setValidationError("Please enter a skill name before submitting.");
+    if (e && e.preventDefault) e.preventDefault();
+    const skills = parseSkills(inputText);
+    if (skills.length === 0) {
+      setValidationError("Please enter at least one skill.");
+      return;
+    }
+    if (skills.length > UNIFIED_MAX) {
+      setValidationError(`Too many skills. Maximum is ${UNIFIED_MAX}; you entered ${skills.length}.`);
       return;
     }
     setValidationError(null);
     setError(null);
-    setResult(null);
+    setResults(null);
+    setProgress(null);
     setLoading(true);
+
     try {
-      const data = await normalizeSkill({ skill: trimmed, token });
-      setResult(data);
+      if (skills.length === 1) {
+        // ── Single: POST /api/v1/normalize ────────────────────────────────
+        const data = await normalizeSkill({ skill: skills[0], token });
+        setResults(data);
+      } else {
+        // ── Multiple: POST /api/v1/normalize/batch ────────────────────────
+        setProgress({ done: 0, total: skills.length });
+        const items = await normalizeBatch({ inputs: skills, token });
+        // items = [{ source_index, result }]
+        // Group by source_index to handle one input → many extracted skills
+        const groups = {};
+        for (const item of items) {
+          const si = item.source_index ?? 0;
+          if (!groups[si]) groups[si] = [];
+          groups[si].push({ ...item.result });
+        }
+        const flatRows = [];
+        for (let i = 0; i < skills.length; i++) {
+          if (groups[i] && groups[i].length > 0) {
+            for (const r of groups[i]) {
+              flatRows.push({ ...r, _originalInput: skills[i] });
+            }
+          } else {
+            flatRows.push({
+              input: skills[i], skill: null, version: null,
+              category: null, description: null, status: "unresolved",
+              aliases: [], _originalInput: skills[i],
+            });
+          }
+        }
+        setProgress({ done: skills.length, total: skills.length });
+        setResults(flatRows);
+      }
     } catch (err) {
       setError(err.message || "An unexpected error occurred.");
     } finally {
       setLoading(false);
+      setProgress(null);
     }
   }
 
+  // ── Reset ────────────────────────────────────────────────────────────────
   function handleReset() {
-    setSkill("");
-    setResult(null);
+    setInputText("");
+    setResults(null);
     setError(null);
     setValidationError(null);
+    setProgress(null);
   }
+
+  const matched    = results ? results.filter((r) => r.status === "matched").length    : 0;
+  const unresolved = results ? results.filter((r) => r.status === "unresolved").length : 0;
+  const failed     = results ? results.filter((r) => r.status === "failed").length     : 0;
 
   return (
     <div className="page">
-      {/* Page header */}
       <div className="page-header">
         <div>
-          <h1 className="page-title">Normalize Skill</h1>
-          <p className="page-subtitle">
-            Enter a skill name or phrase to look up its normalized form, category, and pipeline status.
-          </p>
+          <h1 className="page-title">Normalize Skills</h1>
+          <p className="page-subtitle">Map raw skill inputs to their canonical forms.</p>
         </div>
       </div>
 
-      {/* Input form */}
+      {/* ── Input card ── */}
       <div className="normalize-form-card">
         <form onSubmit={handleSubmit} noValidate>
-          <div className="normalize-form-row">
-            <div className="form-field normalize-input-field">
-              <label htmlFor="normalize-skill-input">Skill name or phrase</label>
-              <input
-                id="normalize-skill-input"
-                type="text"
-                value={skill}
-                onChange={(e) => { setSkill(e.target.value); setValidationError(null); }}
-                placeholder="e.g. react.js, machine learning, data analysis…"
-                disabled={loading}
-                autoComplete="off"
-                // eslint-disable-next-line jsx-a11y/no-autofocus
-                autoFocus
-              />
-              {validationError && (
-                <span className="field-validation-error" role="alert">{validationError}</span>
-              )}
-            </div>
+          <div className="form-field">
+            <textarea
+              id="unified-skill-input"
+              aria-label="Skill input"
+              className="batch-input-area"
+              value={inputText}
+              onChange={(e) => { setInputText(e.target.value); setValidationError(null); setResults(null); }}
+              placeholder="Enter one or more skills..."
+              rows={4}
+              style={{ minHeight: "100px", maxHeight: "120px", resize: "vertical" }}
+              disabled={loading}
+              spellCheck={false}
+              autoFocus
+            />
+            <span className="field-hint" style={{ marginTop: 4 }}>Separate multiple skills with commas or new lines.</span>
+            {validationError && (
+              <span className="field-validation-error" role="alert">{validationError}</span>
+            )}
+          </div>
+
+          {/* Action buttons */}
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
             <button
               type="submit"
               className="btn-primary normalize-submit-btn"
-              disabled={loading}
+              disabled={loading || skillCount === 0 || isOver}
             >
               {loading
-                ? <><span className="spinner spinner--sm" aria-hidden="true" /> Normalizing…</>
-                : "Normalize Skill"
+                ? <><span className="spinner spinner--sm" aria-hidden="true" /> {progress ? `Processing ${progress.done} of ${progress.total}\u2026` : "Normalizing\u2026"}</>
+                : "Normalize Skills"
               }
             </button>
+            {(inputText || results) && !loading && (
+              <button type="button" className="btn-secondary" onClick={handleReset}>Clear</button>
+            )}
           </div>
         </form>
       </div>
 
-      {/* API / network error */}
+      {/* ── Error ── */}
       {!loading && error && (
         <div className="state-error" role="alert">
           <strong>Normalization failed.</strong>
           <p>{error}</p>
-          <button className="retry-btn" onClick={() => handleSubmit({ preventDefault: () => {} })}>Try again</button>
+          <button className="retry-btn" onClick={handleSubmit}>Try again</button>
         </div>
       )}
 
-      {/* Results */}
-      {!loading && result && result.length > 0 && (
+      {/* ── Results table ── */}
+      {!loading && results && results.length > 0 && (
         <div className="normalize-results">
-          <h2 className="normalize-results-title">
-            {result.length === 1 ? "Result" : `${result.length} Results`}
-          </h2>
-          {result.map((item, idx) => (
-            <div key={idx} className="normalize-result-card">
-              <dl className="normalize-result-grid">
-                <dt>Input Skill</dt>
-                <dd className="cell-raw">{item.input || skill}</dd>
-                <dt>Normalized Skill</dt>
-                <dd className="cell-skill">
-                  {item.skill || "Unresolved"}
-                  {item.status === "matched" && item.skill && (
-                    <span className="normalize-alias-inline">
-                      <AliasPopover aliases={item.aliases ?? []} skillName={item.skill} />
-                    </span>
-                  )}
-                </dd>
-                {item.version && <><dt>Version</dt><dd className="cell-version">{item.version}</dd></>}
-                {item.category && <><dt>Category</dt><dd><span className="category-tag">{item.category}</span></dd></>}
-                {item.description && <><dt>Description</dt><dd className="cell-description">{item.description}</dd></>}
-              </dl>
-            </div>
-          ))}
-          <div className="normalize-result-actions">
-            <button className="btn-secondary" onClick={handleReset}>Normalize another skill</button>
+          <div className="batch-summary">
+            <span style={{ fontWeight: 600, fontSize: 14 }}>
+              {results.length} result{results.length !== 1 ? "s" : ""}
+            </span>
+            <span className="batch-summary-stat batch-summary-stat--matched">{matched} matched</span>
+            {unresolved > 0 && <span className="batch-summary-stat batch-summary-stat--unresolved">{unresolved} unresolved</span>}
+            {failed     > 0 && <span className="batch-summary-stat batch-summary-stat--failed">{failed} failed</span>}
+            <button
+              className="btn-secondary"
+              style={{ marginLeft: "auto" }}
+              onClick={() => exportCsvResults(results)}
+            >
+              &#8595; Export CSV
+            </button>
           </div>
+
+          <div className="table-wrapper">
+            <table className="data-table" aria-label="Normalization results">
+              <thead>
+                <tr>
+                  <th scope="col">Original Input</th>
+                  <th scope="col">Normalized Skill</th>
+                  <th scope="col">Version</th>
+                  <th scope="col">Category</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {results.map((item, idx) => (
+                  <NormalizeResultRow key={idx} item={item} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="normalize-result-actions" style={{ marginTop: 16 }}>
+            <button className="btn-secondary" onClick={handleReset}>Normalize more skills</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Empty result state ── */}
+      {!loading && results && results.length === 0 && (
+        <div className="state-empty" style={{ padding: "24px", textAlign: "center", color: "var(--color-muted)" }}>
+          <p>No results returned. The input may not have contained recognizable skill phrases.</p>
+          <button className="btn-secondary" style={{ marginTop: 12 }} onClick={handleReset}>Try again</button>
         </div>
       )}
     </div>
   );
 }
+
+/** Expandable row: description + alias chips in an inline detail row */
+function NormalizeResultRow({ item }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasDescription = Boolean(item.description);
+  const hasAliases     = Array.isArray(item.aliases) && item.aliases.length > 0;
+  const hasDetails     = hasDescription || hasAliases;
+  const isFailed       = item.status === "failed";
+  const displayInput   = item._originalInput ?? item.input ?? "\u2014";
+
+  return (
+    <>
+      <tr>
+        <td className="cell-raw">{displayInput}</td>
+        <td className="cell-skill">
+          {item.skill || <span className="cell-empty">—</span>}
+          {item.status === "matched" && item.skill && item.aliases?.length > 0 && (
+            <span className="normalize-alias-inline">
+              <AliasPopover aliases={item.aliases} skillName={item.skill} />
+            </span>
+          )}
+        </td>
+        <td>{item.version ? <span className="cell-version">{item.version}</span> : <span className="cell-empty">—</span>}</td>
+        <td>{item.category ? <span className="category-tag">{item.category}</span> : <span className="cell-empty">—</span>}</td>
+        <td>
+          {isFailed
+            ? <span className="status-badge status--unresolved" title={item.error ?? undefined}>Failed</span>
+            : <StatusBadge value={item.status} />
+          }
+        </td>
+        <td className="cell-actions">
+          {hasDetails && (
+            <button
+              className="btn-view-aliases"
+              onClick={() => setExpanded((o) => !o)}
+              aria-expanded={expanded}
+            >
+              {expanded ? "Hide" : "Details"}
+            </button>
+          )}
+        </td>
+      </tr>
+      {expanded && hasDetails && (
+        <tr className="row--detail">
+          <td colSpan={6} style={{ padding: "10px 16px", background: "var(--color-surface-alt, #f9f7f4)" }}>
+            {hasDescription && (
+              <div style={{ marginBottom: hasAliases ? 10 : 0 }}>
+                <strong style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-muted)" }}>Description</strong>
+                <p style={{ margin: "4px 0 0", fontSize: 13 }}>{item.description}</p>
+              </div>
+            )}
+            {hasAliases && (
+              <div>
+                <strong style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-muted)" }}>Aliases</strong>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                  {item.aliases.map((a, i) => (
+                    <span key={i} className="alias-chip">{a}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
 
 
 // ══════════════════════════════════════════════════════════════════════════════

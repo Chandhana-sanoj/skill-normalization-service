@@ -24,8 +24,8 @@ class MultiNormalizationRequest(BaseModel):
     inputs: list[str] = Field(
         ...,
         min_length=1,
-        max_length=100,
-        description="List of skill phrases to normalize",
+        max_length=500,
+        description="List of up to 500 skill phrases to normalize",
         examples=[["Python for Machine Learning", "Java 17"]],
     )
 

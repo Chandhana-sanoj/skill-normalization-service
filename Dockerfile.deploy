@@ -1,0 +1,2 @@
+FROM skillnorm-backend:rollback-nov07
+COPY app ./app

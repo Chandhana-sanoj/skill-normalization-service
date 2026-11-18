@@ -334,3 +334,17 @@ class CanonicalSkillRepository:
                     (name, description, category, embedding, skill_id),
                 )
                 return cur.fetchone() is not None
+
+    def list_distinct_categories(self) -> list[str]:
+        """Return all distinct non-null categories sorted alphabetically."""
+        with psycopg.connect(**self.db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT DISTINCT category
+                    FROM canonical_skill
+                    WHERE category IS NOT NULL AND category <> ''
+                    ORDER BY category;
+                    """
+                )
+                return [row[0] for row in cur.fetchall()]

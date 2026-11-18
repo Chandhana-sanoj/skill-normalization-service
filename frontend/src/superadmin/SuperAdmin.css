@@ -1169,3 +1169,81 @@ a.stat-card:hover { border-color: var(--color-accent); }
 .org-group .data-table thead th {
   background: var(--color-surface);
 }
+
+/* ─── Add Skill Modal – category dropdown ─────────────────────────────── */
+.add-skill-cat-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1.5px solid var(--color-border, #ddd);
+  border-radius: 7px;
+  background: var(--color-surface, #fff);
+  font-size: 13.5px;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.15s;
+}
+.add-skill-cat-trigger:focus {
+  outline: none;
+  border-color: var(--color-accent, #e36820);
+}
+
+.add-skill-cat-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 200;
+  background: var(--color-surface, #fff);
+  border: 1.5px solid var(--color-border, #ddd);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.12);
+  overflow: hidden;
+}
+
+.add-skill-cat-search {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border: none;
+  border-bottom: 1px solid var(--color-border, #ddd);
+  font-size: 13px;
+  outline: none;
+  background: var(--color-surface, #fff);
+}
+
+.add-skill-cat-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.add-skill-cat-option {
+  padding: 8px 14px;
+  font-size: 13.5px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.add-skill-cat-option:hover {
+  background: var(--color-hover, #fdf4ee);
+}
+.add-skill-cat-option--selected {
+  background: var(--color-accent-light, #fdf0e7);
+  font-weight: 600;
+  color: var(--color-accent, #e36820);
+}
+.add-skill-cat-empty {
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--color-muted, #888);
+}
+
+/* ─── Field-level validation errors ──────────────────────────────────── */
+.field-error {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #d7373f;
+}

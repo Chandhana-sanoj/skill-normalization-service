@@ -277,21 +277,33 @@ class MultiSkillExtractor:
         return elems, accepted
 
     def _unmatched_candidates(self, keys):
-        """Pass genuine unknown skills forward, but ignore noise."""
+        """Preserve unknown phrases without mistaking ambiguous aliases for skills."""
+        if not keys:
+            return []
+
+        # If a catalogue token was present but rejected as ambiguous (for example,
+        # "go" in an ordinary sentence), keep the original phrase intact. Removing
+        # connector words here would turn normal prose into a misleading skill name.
+        if any(self._normalize(key) in self.lookup for key in keys if key):
+            return [Candidate(self._join(keys), None)]
 
         skip = self.connectors | self.filler_words
-
         meaningful = [
-            k for k in keys
-            if k
-            and k.lower() not in skip
-            and not self._is_noise_token(k)
-            and not NUMERIC_RE.fullmatch(k)
+            key for key in keys
+            if key
+            and key.lower() not in skip
+            and not self._is_noise_token(key)
+            and not NUMERIC_RE.fullmatch(key)
         ]
 
-        return [
-            Candidate(self._join(meaningful), None)
-        ] if meaningful else []
+        if meaningful:
+            return [Candidate(self._join(meaningful), None)]
+
+        # A generic descriptor on its own is still valid input, not empty noise.
+        if any(key and key.lower() in self.generic_words for key in keys):
+            return [Candidate(self._join(keys), None)]
+
+        return []
 
     def _split_runs(self, elems):
         """Connector words separate runs of elements."""
@@ -357,7 +369,7 @@ class MultiSkillExtractor:
     def _run_candidates(self, run, label_only):
         hits = [e for e in run if e.kind == "hit"]
         if label_only:
-            return [Candidate(h.text, h.skill_id, h.version) for h in hits]
+            return [Candidate(f"{h.text} {h.version}" if h.version else h.text, h.skill_id, h.version) for h in hits]
 
         lefts = [e for e in run if e.kind == "word" and e.key and not NUMERIC_RE.match(e.key)
                  and e.key.lower() not in self.proficiency_words]
@@ -374,9 +386,10 @@ class MultiSkillExtractor:
         if len(hits) == 1:
             hit = hits[0]
             if not meaningful:
-                return [Candidate(hit.text, hit.skill_id, hit.version)]
+                text = f"{hit.text} {hit.version}" if hit.version else hit.text
+                return [Candidate(text, hit.skill_id, hit.version)]
             keep = {id(e) for e in lefts}
-            parts = [e.text if e.kind == "hit" else e.key for e in run
+            parts = [(f"{e.text} {e.version}" if e.version else e.text) if e.kind == "hit" else e.key for e in run
                      if e.kind == "hit" or id(e) in keep]
             return [Candidate(" ".join(parts), None)]       # compound phrase stays whole
 
@@ -390,7 +403,8 @@ class MultiSkillExtractor:
         for elem in run:
             if elem.kind == "hit":
                 flush()
-                out.append(Candidate(elem.text, elem.skill_id, elem.version))
+                text = f"{elem.text} {elem.version}" if elem.version else elem.text
+                out.append(Candidate(text, elem.skill_id, elem.version))
             elif id(elem) in meaningful:
                 buf.append(elem.key)
         flush()

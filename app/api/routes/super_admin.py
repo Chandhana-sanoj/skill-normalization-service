@@ -48,6 +48,7 @@ class CreateSkillRequest(BaseModel):
     name: str
     description: str | None = None
     category: str | None = None
+    aliases: list[str] | None = None
 class CreateAliasRequest(BaseModel):
     alias: str
 class UpdateSkillRequest(BaseModel):
@@ -189,6 +190,14 @@ def get_all_canonical_skills(
     }
 
 
+@router.get("/skills-categories")
+def get_skill_categories():
+    """Return all distinct non-null categories from the canonical skill catalogue."""
+    repository = CanonicalSkillRepository()
+    categories = repository.list_distinct_categories()
+    return {"categories": categories}
+
+
 @router.get("/skills/{skill_id}/aliases")
 def get_skill_aliases(skill_id: int):
     """Get all aliases for a specific canonical skill."""
@@ -241,6 +250,26 @@ def create_canonical_skill(
         embedding=embedding,
     )
 
+    # Save initial aliases (auto-include canonical name; deduplicate; skip empties)
+    raw_aliases = list(payload.aliases or [])
+    # Ensure the canonical name itself is always an alias
+    name_lower = name.lower()
+    if not any(a.strip().lower() == name_lower for a in raw_aliases):
+        raw_aliases.insert(0, name)
+    seen: set[str] = set()
+    for raw in raw_aliases:
+        a = raw.strip()
+        if not a:
+            continue
+        a_lower = a.lower()
+        if a_lower in seen:
+            continue
+        seen.add(a_lower)
+        try:
+            repository.add_alias(skill_id, a)
+        except Exception:
+            pass  # ignore duplicate alias errors
+
     # Refresh catalogue cache
     (
         request.app.state.alias_map,
@@ -256,7 +285,7 @@ def create_canonical_skill(
         action="create_skill",
         entity_type="canonical_skill",
         entity_id=skill_id,
-        details={"name": name, "category": category},
+        details={"name": name, "category": category, "alias_count": len(seen)},
     )
 
     return {
